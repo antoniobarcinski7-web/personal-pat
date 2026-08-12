@@ -74,6 +74,8 @@ URL, validação de parâmetro) e deixe só a verificação de layout em `-m net
 - Comentário explica *por que*, não *o quê*. A maior parte do valor dos comentários
   aqui está em registrar a razão de uma restrição, para que ninguém a remova depois
   por parecer excesso de zelo.
-- Dependências mínimas e pinadas. Evite frameworks de agente: o valor do desenho está
+- Dependências mínimas e travadas em `uv.lock`. Ao mexer em `pyproject.toml`, rode
+  `uv lock` e commite o lockfile junto — `uv lock --check` falha se eles divergirem.
+  Instale sempre com `--locked`. Evite frameworks de agente: o valor do desenho está
   no pipeline explícito e inspecionável, e frameworks escondem exatamente o que
   precisa ser auditado.

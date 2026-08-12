@@ -29,8 +29,9 @@ Qualquer número resolve, por um identificador, para: documento fonte (SHA-256),
 localização dentro dele, versão do extrator e run de ingestão. Nada de números órfãos.
 
 ### I3 — Reprodutibilidade determinística
-Bronze imutável (reprocessar nunca depende de re-baixar), dependências pinadas,
-timestamps sempre timezone-aware, todo run registrado com versão de código.
+Bronze imutável (reprocessar nunca depende de re-baixar), dependências travadas em
+`uv.lock` com hash por wheel, timestamps sempre timezone-aware, e todo run gravando
+`git_sha` + versões de `pat` e Python no catálogo.
 
 ---
 
@@ -94,7 +95,7 @@ reapresentação** — e ambas as versões continuam em disco.
 ## Uso
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+uv sync --locked --extra dev    # instala exatamente o que está em uv.lock
 export PAT_HOME=data
 
 pat init                             # diretórios + esquema
@@ -116,9 +117,12 @@ ingeridos.
 ### Testes
 
 ```bash
-.venv/bin/pytest              # suite padrão (sem rede)
-.venv/bin/pytest -m network   # contra a CVM real
+uv run pytest              # suite padrão (sem rede)
+uv run pytest -m network   # contra a CVM real
 ```
+
+`uv lock --check` verifica que o lockfile ainda reflete o `pyproject.toml`.
+Nunca instale com dependências resolvidas na hora: `--locked` é o que mantém I3.
 
 ---
 
