@@ -218,12 +218,18 @@ class AsOf:
         cod_cvm: int | None = None,
         cd_conta: str | None = None,
         statement: str | None = None,
+        consolidated: bool | None = None,
         min_abs_pct: Decimal | float | None = None,
     ) -> list[Restatement]:
         """Chaves cujo valor mudou entre a primeira e a ultima versao conhecida.
 
         A comparacao e feita entre a versao mais antiga e a mais nova de cada
         chave logica; empates de data sao desempatados como no `value`.
+
+        Diferente de `value` e `history`, `consolidated` aqui e opcional e o
+        default e nao filtrar: esta e uma consulta de descoberta, e uma
+        companhia costuma reapresentar individual e consolidado no mesmo
+        documento. Esconder um dos dois por default omitiria metade do fato.
         """
         filters: list[str] = []
         params: list[object] = []
@@ -236,6 +242,9 @@ class AsOf:
         if statement is not None:
             filters.append("statement = ?")
             params.append(statement)
+        if consolidated is not None:
+            filters.append("consolidated = ?")
+            params.append(consolidated)
         where = f"WHERE {' AND '.join(filters)}" if filters else ""
 
         keys = self.conn.execute(

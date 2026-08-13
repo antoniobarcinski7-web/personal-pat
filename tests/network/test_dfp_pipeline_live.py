@@ -126,12 +126,13 @@ def test_reapresentacao_real_do_gpa_ponta_a_ponta(zips, tmp_path):
         # isso, em vez de devolver o numero que so existiria depois.
         assert asof.value(**chave, as_of=date(2024, 1, 1)) is None
 
-        # O GPA reapresentou individual e consolidado; a consulta devolve os
-        # dois, porque o escopo faz parte da chave logica.
-        items = asof.restatements(cod_cvm=GPA, cd_conta=RECEITA, statement="DRE")
-        assert len(items) == 2
+        # O GPA reapresentou individual e consolidado; sem recorte de escopo a
+        # consulta devolve os dois, que e o comportamento correto.
+        assert len(asof.restatements(cod_cvm=GPA, cd_conta=RECEITA, statement="DRE")) == 2
 
-        (item,) = [i for i in items if i.consolidated]
+        (item,) = asof.restatements(
+            cod_cvm=GPA, cd_conta=RECEITA, statement="DRE", consolidated=True
+        )
         assert item.delta == Decimal("-1457000000")
         assert item.original.fact_id != item.revised.fact_id
     finally:

@@ -64,6 +64,11 @@ A ponta a ponta, contra números públicos reais, o caso vive em
 — a receita FY2023 do GPA, divulgada em fev/2024 e reapresentada em fev/2025. É o
 teste que prova o critério da Fase 1, e ele só roda com `-m network`.
 
+Cuidado com a chave lógica ao consultar reapresentações: uma companhia costuma
+reapresentar individual **e** consolidado no mesmo documento. `restatements()` não
+filtra escopo por default — de propósito, porque esconder uma das metades daria uma
+contagem que parece certa e está errada.
+
 ## Testes
 
 - `pytest` — suite padrão, sem rede.

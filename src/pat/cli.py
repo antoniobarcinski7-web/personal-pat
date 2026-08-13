@@ -301,6 +301,7 @@ def cmd_restatements(args) -> int:
         cod_cvm=args.cod_cvm,
         cd_conta=args.conta,
         statement=args.statement,
+        consolidated=args.consolidated,
         min_abs_pct=args.min_pct,
     )
     if not items:
@@ -423,6 +424,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_rest.add_argument("--cod-cvm", dest="cod_cvm", type=int)
     p_rest.add_argument("--conta")
     p_rest.add_argument("--statement")
+    # Tri-estado: sem flag, lista individual e consolidado. Uma reapresentacao
+    # costuma atingir os dois, e omitir um deles daria uma visao parcial.
+    escopo = p_rest.add_mutually_exclusive_group()
+    escopo.add_argument(
+        "--consolidated", dest="consolidated", action="store_const", const=True, default=None
+    )
+    escopo.add_argument(
+        "--individual", dest="consolidated", action="store_const", const=False
+    )
     p_rest.add_argument("--min-pct", dest="min_pct", type=float, help="delta minimo em %%")
     p_rest.set_defaults(func=cmd_restatements)
 

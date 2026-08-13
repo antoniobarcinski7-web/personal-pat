@@ -171,6 +171,30 @@ def test_filtros_de_recorte_da_busca_por_restatements(asof):
     assert asof.restatements(cd_conta="3.99") == []
 
 
+def test_reapresentacao_simultanea_de_individual_e_consolidado(warehouse):
+    """Caso real: a companhia reapresenta os dois escopos no mesmo documento.
+
+    Sem recorte, os dois aparecem - esconder um deles por default omitiria
+    metade da reapresentacao.
+    """
+    for scope, sid in ((True, "1"), (False, "3")):
+        _grava(warehouse, silver_id=sid * 32, vl_conta=ORIGINAL, consolidated=scope, versao=1)
+        _grava(
+            warehouse,
+            silver_id=chr(ord(sid) + 1) * 32,
+            vl_conta=REVISADO,
+            consolidated=scope,
+            versao=2,
+        )
+    asof = AsOf(warehouse)
+
+    assert len(asof.restatements()) == 2
+    (con,) = asof.restatements(consolidated=True)
+    assert con.consolidated is True
+    (ind,) = asof.restatements(consolidated=False)
+    assert ind.consolidated is False
+
+
 def test_delta_pct_indefinido_quando_o_valor_original_e_zero(warehouse):
     """Divisao por zero nao pode virar excecao no meio de um relatorio."""
     _grava(warehouse, silver_id="1" * 32, vl_conta=Decimal("0"), dt_receb=date(2024, 2, 20))

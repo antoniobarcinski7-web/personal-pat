@@ -131,6 +131,7 @@ pat asof --cod-cvm 9512 --conta 3.01 --period-end 2023-12-31 --as-of 2025-06-30
 
 pat fact-history --cod-cvm 9512 --conta 3.01 --period-end 2023-12-31
 pat restatements --min-pct 5      # o que mudou entre versões, e quanto
+pat restatements --consolidated   # só o escopo consolidado (default: os dois)
 pat provenance <fact_id>          # do número até o byte: blob, membro, linha
 ```
 
