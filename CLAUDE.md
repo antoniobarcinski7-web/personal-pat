@@ -59,6 +59,11 @@ Este comportamento tem teste dedicado:
 `tests/unit/test_ingest.py::test_conteudo_alterado_na_origem_e_detectavel`. Se ele
 quebrar, o tratamento de reapresentação quebrou.
 
+A ponta a ponta, contra números públicos reais, o caso vive em
+`tests/network/test_dfp_pipeline_live.py::test_reapresentacao_real_do_gpa_ponta_a_ponta`
+— a receita FY2023 do GPA, divulgada em fev/2024 e reapresentada em fev/2025. É o
+teste que prova o critério da Fase 1, e ele só roda com `-m network`.
+
 ## Testes
 
 - `pytest` — suite padrão, sem rede.

@@ -6,8 +6,9 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 0.** Espinha dorsal de dados. Não há agente, parsing ou
-métricas ainda — isso é deliberado (ver "Fases").
+**Estado atual: Fase 1.** Espinha dorsal de dados, mais o pipeline
+bronze → silver → gold e consulta `AS OF`. Não há agente nem métricas canônicas
+ainda — isso é deliberado (ver "Fases").
 
 ---
 
@@ -114,6 +115,29 @@ Re-buscar é barato e não duplica armazenamento — e é necessário: é assim 
 reapresentações são detectadas. Rode `pat fetch` periodicamente sobre anos já
 ingeridos.
 
+### Do bronze ao fato consultável
+
+`build` não usa rede: lê bytes já armazenados. Quando um recurso tem mais de uma
+versão de conteúdo no bronze, **todas** são processadas — cada uma traz seu próprio
+`DT_RECEB`, então as duas coexistem no gold com datas de conhecimento diferentes.
+
+```bash
+pat build cvm.dfp --year 2020-2024            # bronze → silver → gold
+pat build cvm.dfp --year 2024 --cod-cvm 9512  # só uma companhia
+
+# valor de receita líquida da Petrobras conhecido em duas datas diferentes
+pat asof --cod-cvm 9512 --conta 3.01 --period-end 2023-12-31 --as-of 2024-06-30
+pat asof --cod-cvm 9512 --conta 3.01 --period-end 2023-12-31 --as-of 2025-06-30
+
+pat fact-history --cod-cvm 9512 --conta 3.01 --period-end 2023-12-31
+pat restatements --min-pct 5      # o que mudou entre versões, e quanto
+pat provenance <fact_id>          # do número até o byte: blob, membro, linha
+```
+
+Se as duas consultas `asof` acima devolvem valores diferentes, houve
+reapresentação — e os dois números continuam consultáveis, cada um pela data em
+que era verdade. É esse o critério de conclusão da Fase 1.
+
 ### Testes
 
 ```bash
@@ -135,23 +159,30 @@ src/pat/
 │   ├── entities.py    Company (CNPJ, cod_cvm, tickers)
 │   ├── documents.py   RawDocument, Retrieval, ResourceRef, HttpMeta
 │   ├── lineage.py     Lineage, Run
-│   └── facts.py       Fact bitemporal  ← alvo da Fase 1
+│   ├── silver.py      AccountLine — uma linha de CSV da CVM, tipada
+│   └── facts.py       Fact bitemporal
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
 │   └── public/cvm.py  DFP, ITR, cadastro
-├── store/           L1 — bronze imutável + catálogo DuckDB
+├── parse/           L1 — bytes → linhas tipadas
+│   └── cvm_dfp.py     abre o ZIP da DFP, tipa cada CSV, registra o que descartou
+├── store/           L1 — bronze imutável + catálogo + silver + gold
 │   ├── bronze.py      content-addressed, atômico, somente-leitura, verificável
 │   ├── catalog.py     runs, documentos, retrievals, detecção de mudança
+│   ├── silver.py      persiste AccountLine; idempotente por silver_id
+│   ├── gold.py        escala, tipo de período, validação → Fact. Append-only.
 │   └── db.py          conexão e esquema
+├── query/asof.py    única porta de leitura do gold; toda consulta exige AS OF
 ├── audit/run.py     manifesto de execução (versão, git sha, timestamps)
 ├── ingest.py        orquestração: resolve → fetch → put → record
+├── build.py         orquestração: bronze → silver → gold, sem rede
 └── cli.py
 
 data/                gitignored
 ├── bronze/blobs/    imutável. NUNCA editar, NUNCA sobrescrever.
 ├── bronze/meta/     sidecar JSON com procedência de cada blob
-└── warehouse.duckdb catálogo (derivado; reconstruível a partir do bronze)
+└── warehouse.duckdb catálogo + silver + gold (derivado; reconstruível)
 ```
 
 O bronze é a fonte de verdade; o DuckDB é derivado. Se o banco for perdido, pode ser
@@ -164,7 +195,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | | Escopo | Critério de conclusão | |
 |---|---|---|---|
 | **0** | contratos, bronze, provider CVM, catálogo | todo byte rastreável à origem | ✅ |
-| **1** | silver + gold bitemporal + `query AS OF` | consulta prova diferença antes/depois de uma reapresentação | |
+| **1** | silver + gold bitemporal + `query AS OF` | consulta prova diferença antes/depois de uma reapresentação | ✅ |
 | **2** | semantics: ~15 métricas versionadas | golden tests batendo com demonstrações conferidas à mão | |
 | **3** | sandbox + coder + charter | pergunta → código → número correto, sem LLM fazendo conta | |
 | **4** | planner, writer, critic, pipeline | relatório com toda afirmação citando `fact_id` | |

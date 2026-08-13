@@ -67,6 +67,92 @@ CREATE INDEX IF NOT EXISTS idx_retrieval_resource
     ON retrieval (dataset_id, resource_key, retrieved_at);
 CREATE INDEX IF NOT EXISTS idx_retrieval_content
     ON retrieval (content_sha256);
+
+-- ---------------------------------------------------------------------------
+-- SILVER: uma linha por linha de CSV, tipada e fiel a fonte.
+-- Escala monetaria preservada crua; aplica-la e interpretacao, e isso e gold.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS silver_line (
+    silver_id         VARCHAR PRIMARY KEY,
+    content_sha256    VARCHAR NOT NULL,
+    retrieval_id      VARCHAR NOT NULL,
+    source_member     VARCHAR NOT NULL,
+    source_line_no    INTEGER NOT NULL,
+
+    cnpj              VARCHAR NOT NULL,
+    cod_cvm           INTEGER NOT NULL,
+    denom_cia         VARCHAR NOT NULL,
+    dt_refer          DATE NOT NULL,
+    versao            INTEGER NOT NULL,
+    doc_id            VARCHAR NOT NULL,
+    dt_receb          DATE NOT NULL,
+    link_doc          VARCHAR,
+
+    statement         VARCHAR NOT NULL,
+    consolidated      BOOLEAN NOT NULL,
+    grupo_dfp         VARCHAR,
+
+    ordem_exerc       VARCHAR NOT NULL,
+    dt_ini_exerc      DATE,
+    dt_fim_exerc      DATE NOT NULL,
+
+    coluna_df         VARCHAR NOT NULL DEFAULT '',
+    cd_conta          VARCHAR NOT NULL,
+    ds_conta          VARCHAR NOT NULL,
+    vl_conta          DECIMAL(38,10) NOT NULL,
+    st_conta_fixa     BOOLEAN,
+    moeda             VARCHAR NOT NULL,
+    escala_moeda      VARCHAR NOT NULL,
+
+    extractor         VARCHAR NOT NULL,
+    extractor_version VARCHAR NOT NULL,
+    extraction_run_id VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_silver_company ON silver_line (cod_cvm, cd_conta, dt_fim_exerc);
+
+-- ---------------------------------------------------------------------------
+-- GOLD: fatos bitemporais. APPEND-ONLY - nunca ha UPDATE.
+-- Reapresentacao nao sobrescreve nada: e uma linha nova com knowledge_date
+-- posterior. A diferenca entre as duas e informacao, e permanece consultavel.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS gold_fact (
+    fact_id            VARCHAR PRIMARY KEY,
+    entity_id          VARCHAR NOT NULL,
+    cod_cvm            INTEGER NOT NULL,
+    denom_cia          VARCHAR NOT NULL,
+
+    statement          VARCHAR NOT NULL,
+    consolidated       BOOLEAN NOT NULL,
+    coluna_df          VARCHAR NOT NULL DEFAULT '',
+    cd_conta           VARCHAR NOT NULL,
+    ds_conta           VARCHAR NOT NULL,
+
+    period_type        VARCHAR NOT NULL,
+    period_start       DATE,
+    period_end         DATE NOT NULL,
+    knowledge_date     DATE NOT NULL,
+
+    value              DECIMAL(38,10) NOT NULL,
+    unit               VARCHAR NOT NULL,
+    currency           VARCHAR,
+
+    ordem_exerc        VARCHAR NOT NULL,
+    source_doc_id      VARCHAR NOT NULL,
+    source_doc_version INTEGER NOT NULL,
+
+    silver_id          VARCHAR NOT NULL,
+    content_sha256     VARCHAR NOT NULL,
+    retrieval_id       VARCHAR NOT NULL,
+    locator            VARCHAR NOT NULL,
+    extractor          VARCHAR NOT NULL,
+    extractor_version  VARCHAR NOT NULL,
+    extraction_run_id  VARCHAR NOT NULL
+);
+
+-- Suporta o predicado central do AS OF: chave logica + corte por conhecimento.
+CREATE INDEX IF NOT EXISTS idx_gold_asof
+    ON gold_fact (cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end, knowledge_date);
 """
 
 
