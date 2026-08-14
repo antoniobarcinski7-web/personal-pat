@@ -1,13 +1,29 @@
-"""Interface de linha de comando da Fase 0.
+"""Interface de linha de comando.
+
+Dados (Fases 0-1)
 
     pat init                            cria diretorios e esquema
     pat sources                         lista providers e datasets
     pat fetch cvm.dfp --year 2020-2024  ingere um dataset
+    pat build cvm.dfp --year 2024       bronze -> silver -> gold
     pat status                          estatisticas do bronze
     pat history cvm.dfp 2024            versoes ja vistas de um recurso
     pat changed                         recursos que mudaram (reapresentacoes)
     pat verify                          reconfere o hash de cada blob
+    pat asof / fact-history / restatements / provenance
     pat runs                            execucoes recentes
+
+Semantica (Fase 2)
+
+    pat concepts                        catalogo universal de conceitos
+    pat metrics                         metricas registradas
+    pat mappings                        conceito -> linha, por regime
+    pat metric ebitda@v1 --cod-cvm ...  calcula uma metrica canonica
+    pat accounts --statement DVA ...    plano de contas efetivo (para mapear)
+    pat mapping-check --cod-cvm ...     os bindings ainda resolvem?
+
+Toda consulta da Fase 2 exige `--as-of`, como as da Fase 1: nao existe atalho
+que devolva "o valor" sem dizer segundo quando.
 """
 
 from __future__ import annotations
@@ -46,6 +62,24 @@ def _open(args) -> tuple[BronzeStore, Catalog, object]:
     conn = connect(paths.warehouse)
     migrate(conn)
     return BronzeStore(paths.bronze), Catalog(conn), conn
+
+
+def _open_readonly(args):
+    """Conexao somente-leitura, ou None com mensagem util.
+
+    Sem isto o DuckDB levanta IOException crua quando o warehouse ainda nao
+    existe - o que e o estado normal de quem acabou de clonar o repositorio,
+    e portanto merece uma instrucao em vez de um stack trace.
+    """
+    paths = resolve_paths(args.home)
+    if not paths.warehouse.exists():
+        print(
+            f"warehouse nao encontrado em {paths.warehouse}.\n"
+            "Rode `pat init` e depois `pat fetch`/`pat build`.",
+            file=sys.stderr,
+        )
+        return None
+    return connect(paths.warehouse, read_only=True)
 
 
 def cmd_init(args) -> int:
@@ -247,8 +281,8 @@ def cmd_build(args) -> int:
 
 
 def cmd_asof(args) -> int:
-    paths = resolve_paths(args.home)
-    conn = connect(paths.warehouse, read_only=True)
+    if (conn := _open_readonly(args)) is None:
+        return 1
     asof = AsOf(conn)
     view = asof.value(
         cod_cvm=args.cod_cvm,
@@ -270,8 +304,8 @@ def cmd_asof(args) -> int:
 
 
 def cmd_fact_history(args) -> int:
-    paths = resolve_paths(args.home)
-    conn = connect(paths.warehouse, read_only=True)
+    if (conn := _open_readonly(args)) is None:
+        return 1
     asof = AsOf(conn)
     views = asof.history(
         cod_cvm=args.cod_cvm,
@@ -295,8 +329,8 @@ def cmd_fact_history(args) -> int:
 
 
 def cmd_restatements(args) -> int:
-    paths = resolve_paths(args.home)
-    conn = connect(paths.warehouse, read_only=True)
+    if (conn := _open_readonly(args)) is None:
+        return 1
     items = AsOf(conn).restatements(
         cod_cvm=args.cod_cvm,
         cd_conta=args.conta,
@@ -325,8 +359,8 @@ def cmd_restatements(args) -> int:
 
 
 def cmd_provenance(args) -> int:
-    paths = resolve_paths(args.home)
-    conn = connect(paths.warehouse, read_only=True)
+    if (conn := _open_readonly(args)) is None:
+        return 1
     asof = AsOf(conn)
     prov = asof.provenance(args.fact_id)
     if prov is None:
@@ -334,6 +368,7 @@ def cmd_provenance(args) -> int:
         conn.close()
         return 1
 
+    paths = resolve_paths(args.home)
     bronze = BronzeStore(paths.bronze)
     print(f"fato        {prov.fact_id}")
     print(f"  conhecido em {prov.knowledge_date} (doc CVM {prov.source_doc_id} v{prov.source_doc_version})")
@@ -355,6 +390,246 @@ def cmd_provenance(args) -> int:
         return 1
     conn.close()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Fase 2 - camada semantica
+# ---------------------------------------------------------------------------
+
+
+def _scope(args):
+    from pat.contracts.semantics import ReportingScope
+
+    return ReportingScope.PARENT_ONLY if args.individual else ReportingScope.CONSOLIDATED
+
+
+def _resolve_entity(asof, args) -> tuple[str, str] | None:
+    """(entity_id, denominacao). O usuario fala codigo CVM; o sistema, entity_id."""
+    ref = asof.entity_by_cod_cvm(args.cod_cvm)
+    if ref is None:
+        print(
+            f"nenhum fato no gold para cod_cvm={args.cod_cvm}. "
+            f"Rode `pat build cvm.dfp --cod-cvm {args.cod_cvm}` primeiro.",
+            file=sys.stderr,
+        )
+        return None
+    return ref.entity_id, ref.denom_cia
+
+
+def cmd_concepts(args) -> int:
+    """O catalogo universal. Nao menciona plano de contas de proposito."""
+    from pat.semantics import concepts
+
+    for concept in sorted(concepts.CATALOG.values(), key=lambda c: c.concept_id):
+        print(f"{concept.concept_id}  ({concept.dimension}, {concept.period_kind})")
+        print(f"  {concept.label_en}")
+        print(f"  {concept.definition}")
+        print(f"  sinal: {concept.sign_convention}")
+        for nota in concept.boundary_notes:
+            print(f"  - {nota}")
+        print()
+    return 0
+
+
+def cmd_metrics(args) -> int:
+    from pat.semantics.registry import default_registry
+
+    for metric in default_registry().all():
+        d = metric.definition
+        print(f"{d.name}@{d.version}  [{d.kind}, {d.dimension}]")
+        print(f"  {d.definition}")
+        if d.requires_concepts:
+            print(f"  conceitos:   {', '.join(d.requires_concepts)}")
+        if d.requires_metrics:
+            print(f"  depende de:  {', '.join(str(m) for m in d.requires_metrics)}")
+        for check in d.checks:
+            print(f"  check {check.check_id}: {check.description.splitlines()[0]}")
+        print(f"  porque:      {' '.join(d.rationale.split())}")
+        print()
+    return 0
+
+
+def cmd_mappings(args) -> int:
+    from pat.semantics.loader import load_dir
+
+    for mapping in load_dir().all():
+        escopo = f"empresa {mapping.entity_id}" if mapping.entity_id else "familia"
+        default = "  [default da fonte]" if mapping.is_default_for_source else ""
+        print(f"{mapping.mapping_id}  ({escopo}){default}")
+        print(f"  {mapping.framework} · {mapping.taxonomy} · {mapping.jurisdiction} · {mapping.source}")
+        if mapping.parent:
+            print(f"  herda de   {mapping.parent}")
+        if mapping.verified_against:
+            print(f"  conferido  {mapping.verified_against} ({mapping.verified_by})")
+        print(f"  sha256     {mapping.source_sha256[:16]}")
+        for binding in mapping.bindings:
+            marca = "" if binding.fidelity == "exact" else f"  <-- {binding.fidelity}"
+            print(f"    {binding.concept_id:<24}{marca}")
+            for line in binding.lines:
+                sinal = "+" if line.sign > 0 else "-"
+                print(f"      {sinal} {line.address.as_str()}")
+        print()
+    return 0
+
+
+def _print_metric(result) -> None:
+    from pat.contracts.semantics import Dimension
+
+    escopo = "consolidado" if result.scope == "consolidated" else "individual"
+    ident = " ".join(f"{k}={v}" for k, v in result.local_ids)
+    print(f"{result.metric}@{result.metric_version}   [{result.kind}]")
+    print(f"  empresa    {result.display_name or result.entity_id}  {ident}")
+    print(f"  escopo     {escopo}")
+    print(f"  periodo    {result.period_start or '-'} .. {result.period_end}  [{result.period_type}]")
+    if result.dimension is Dimension.MONEY:
+        print(f"  valor      {result.value:>22,.2f} {result.currency}  ({result.value / 1_000_000:,.1f} milhoes)")
+    else:
+        print(f"  valor      {result.value:>22,.6f}  ({result.value * 100:,.2f}%)")
+    print(f"  conhecido  {result.knowledge_date}   (AS OF {result.as_of})")
+    print(f"  fidelidade {result.fidelity}")
+    if result.fidelity != "exact":
+        print("             ^ montada sobre binding aproximado; ver `pat mappings`")
+    print(f"  mapeamento {result.mapping_id} {result.mapping_version} ({result.mapping_sha256[:12]})")
+    if not result.mapping_confirmed:
+        print("             ^ SEM mapeamento conferido para esta empresa: caiu na familia default")
+    print(f"  regime     {result.framework} · {result.jurisdiction}")
+
+    if result.checks:
+        print("  checks")
+        for check in result.checks:
+            linha = f"    {check.status:<15} {check.check_id}"
+            if check.observed is not None and check.expected is not None:
+                linha += f"   observado {check.observed:,.0f} · esperado {check.expected:,.0f}"
+            print(linha)
+
+    print("  insumos")
+    for ref in result.inputs:
+        if ref.is_metric:
+            print(f"    {ref.role:<22} {ref.value:>20,.2f}  (metrica)")
+        else:
+            sinal = "+" if (ref.sign_applied or 1) > 0 else "-"
+            print(f"    {ref.role:<22} {ref.value:>20,.2f}  {sinal} {ref.address}")
+            print(f"      fact_id {ref.fact_id}   conhecido {ref.knowledge_date}")
+
+
+def cmd_metric(args) -> int:
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        asof = AsOf(conn)
+        entity = _resolve_entity(asof, args)
+        if entity is None:
+            return 1
+
+        from pat.contracts.semantics import MetricUnavailable
+        from pat.semantics import build_engine
+
+        engine = build_engine(conn)
+        result = engine.compute(
+            args.metric,
+            entity_id=entity[0],
+            period_end=date.fromisoformat(args.period_end),
+            scope=_scope(args),
+            as_of=date.fromisoformat(args.as_of),
+        )
+        if isinstance(result, MetricUnavailable):
+            print(f"{result.metric}@{result.metric_version}: INDISPONIVEL", file=sys.stderr)
+            print(f"  motivo   {result.reason}", file=sys.stderr)
+            print(f"  {result.message}", file=sys.stderr)
+            if result.concept_id:
+                print(f"  conceito {result.concept_id}", file=sys.stderr)
+            for endereco in result.tried:
+                print(f"  tentado  {endereco}", file=sys.stderr)
+            if result.remedy:
+                print(f"  saida    {result.remedy}", file=sys.stderr)
+            return 1
+
+        _print_metric(result)
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_accounts(args) -> int:
+    """Plano de contas efetivo de uma companhia: a ferramenta de quem escreve
+    mapeamento. O casamento continua sendo feito por um humano."""
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        asof = AsOf(conn)
+        entity = _resolve_entity(asof, args)
+        if entity is None:
+            return 1
+
+        rows = asof.accounts(
+            cod_cvm=args.cod_cvm,
+            statement=args.statement,
+            period_end=date.fromisoformat(args.period_end),
+            as_of=date.fromisoformat(args.as_of),
+            consolidated=not args.individual,
+        )
+        if not rows:
+            print(f"nenhuma conta de {args.statement} para essa chave.")
+            return 1
+
+        print(f"{entity[1]} ({args.cod_cvm}) · {args.statement} · {args.period_end}\n")
+        for row in rows:
+            profundidade = row.cd_conta.count(".")
+            recuo = "  " * profundidade
+            print(f"  {row.cd_conta:<14} {recuo}{row.ds_conta[:44]:<46} {row.value / 1_000_000:>14,.1f} MM")
+        print(f"\n{len(rows)} contas. Escolha a linha e escreva o binding com equivalence_basis.")
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_mapping_check(args) -> int:
+    """Confere que todo binding em uso ainda resolve, e com o rotulo esperado."""
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        asof = AsOf(conn)
+        entity = _resolve_entity(asof, args)
+        if entity is None:
+            return 1
+
+        from pat.semantics import build_engine
+        from pat.semantics.check import OK, check_chain
+        from pat.semantics.loader import load_dir
+
+        engine = build_engine(conn)
+        chain = load_dir().resolve(entity[0], source="cvm.dfp")
+        if chain is None:
+            print(f"nenhum mapeamento cobre {entity[0]}.", file=sys.stderr)
+            return 1
+
+        resolver = engine.resolver_for(chain.head.taxonomy)
+        results = check_chain(
+            chain,
+            resolver,
+            entity_id=entity[0],
+            period_end=date.fromisoformat(args.period_end),
+            as_of=date.fromisoformat(args.as_of),
+            scope=_scope(args),
+        )
+
+        print(f"{entity[1]} ({args.cod_cvm}) · cadeia {' <- '.join(m.mapping_id for m in chain.chain)}")
+        if not chain.confirmed:
+            print("  ATENCAO: sem mapeamento proprio; usando a familia default.\n")
+        else:
+            print()
+
+        for item in results:
+            marca = "ok  " if item.status == OK else "FALHA"
+            print(f"  [{marca}] {item.concept_id:<22} {item.address}")
+            if item.failed:
+                print(f"          {item.status}: {item.detail}")
+
+        falhas = [r for r in results if r.failed]
+        print(f"\n{len(results)} binding(s), {len(falhas)} com problema.")
+        return 1 if falhas else 0
+    finally:
+        conn.close()
 
 
 def cmd_runs(args) -> int:
@@ -439,6 +714,46 @@ def build_parser() -> argparse.ArgumentParser:
     p_prov = sub.add_parser("provenance", help="cadeia completa de um fato ate os bytes")
     p_prov.add_argument("fact_id")
     p_prov.set_defaults(func=cmd_provenance)
+
+    # -- Fase 2: camada semantica -------------------------------------------
+
+    sub.add_parser("concepts", help="catalogo universal de conceitos").set_defaults(
+        func=cmd_concepts
+    )
+    sub.add_parser("metrics", help="metricas registradas e suas definicoes").set_defaults(
+        func=cmd_metrics
+    )
+    sub.add_parser("mappings", help="mapeamentos conceito -> linha, por regime").set_defaults(
+        func=cmd_mappings
+    )
+
+    def _metric_key(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--cod-cvm", dest="cod_cvm", type=int, required=True)
+        parser.add_argument("--period-end", dest="period_end", required=True, help="AAAA-MM-DD")
+        parser.add_argument(
+            "--as-of", dest="as_of", required=True, help="AAAA-MM-DD; nao ha consulta sem ela"
+        )
+        parser.add_argument(
+            "--individual", action="store_true", help="usa a DF individual (default: consolidada)"
+        )
+
+    p_metric = sub.add_parser("metric", help="calcula uma metrica canonica")
+    p_metric.add_argument("metric", help="nome@versao, ex. ebitda@v1")
+    _metric_key(p_metric)
+    p_metric.set_defaults(func=cmd_metric)
+
+    p_accounts = sub.add_parser(
+        "accounts", help="plano de contas efetivo de uma companhia (para escrever mapeamento)"
+    )
+    _metric_key(p_accounts)
+    p_accounts.add_argument("--statement", default="DRE", help="DRE, BPA, BPP, DFC_MI, DVA...")
+    p_accounts.set_defaults(func=cmd_accounts)
+
+    p_mcheck = sub.add_parser(
+        "mapping-check", help="confere que os bindings ainda resolvem na fonte"
+    )
+    _metric_key(p_mcheck)
+    p_mcheck.set_defaults(func=cmd_mapping_check)
 
     p_runs = sub.add_parser("runs", help="execucoes recentes")
     p_runs.add_argument("--limit", type=int, default=20)

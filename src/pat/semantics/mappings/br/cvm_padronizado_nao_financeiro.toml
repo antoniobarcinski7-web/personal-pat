@@ -1,0 +1,149 @@
+# Familia default: plano de contas padronizado da CVM, companhias NAO financeiras.
+#
+# Vale para empresas sem mapeamento proprio. Todo numero que sair daqui carrega
+# mapping_confirmed=false ate que alguem escreva e confira o arquivo da empresa.
+#
+# Bancos e seguradoras NAO estao cobertos: a DRE deles comeca em receitas da
+# intermediacao financeira e 3.01 significa outra coisa. Ate existir a familia
+# financeira, essas companhias respondem NO_MAPPING - que e a resposta certa,
+# porque o numero errado sairia parecendo certo.
+
+mapping_id      = "cvm.plano_padronizado/nao_financeiro"
+mapping_version = "v1"
+framework       = "ifrs_cpc_br"
+taxonomy        = "cvm.plano_padronizado"
+jurisdiction    = "BR"
+source          = "cvm.dfp"
+is_default_for_source = true
+
+verified_by      = "antonio.barcinski"
+verified_against = "Plano de contas padronizado CVM, DFP 2023-2024"
+
+# --- Demonstracao do resultado ---------------------------------------------
+
+[[binding]]
+concept_id = "revenue_net"
+fidelity   = "exact"
+equivalence_basis = """
+No plano padronizado da CVM, 3.01 e receita ja liquida de impostos sobre vendas, \
+devolucoes e descontos comerciais. A receita bruta nao aparece na DRE: ela so \
+existe na DVA (7.01.01), e e maior que 3.01 em toda companhia que recolhe ICMS. \
+Portanto 3.01 e revenue_net, e nao revenue_gross.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.01"
+sign      = 1
+label_as_reported = "Receita de Venda de Bens e/ou Serviços"
+
+[[binding]]
+concept_id = "cogs"
+fidelity   = "exact"
+equivalence_basis = """
+3.02 e o custo dos bens e servicos vendidos atribuivel a receita de 3.01. \
+Publicado com sinal negativo na origem; sign=-1 normaliza para a convencao do \
+conceito (positivo = despesa).
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.02"
+sign      = -1
+label_as_reported = "Custo dos Bens e/ou Serviços Vendidos"
+
+[[binding]]
+concept_id = "gross_profit"
+fidelity   = "exact"
+equivalence_basis = "3.03 e o subtotal 3.01 + 3.02 publicado pela propria companhia."
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.03"
+sign      = 1
+label_as_reported = "Resultado Bruto"
+
+[[binding]]
+concept_id = "operating_expenses_net"
+fidelity   = "exact"
+equivalence_basis = """
+3.04 agrega despesas operacionais liquidas de outras receitas operacionais, entre \
+o lucro bruto e o resultado operacional. Negativo na origem; sign=-1 normaliza \
+para positivo = despesa liquida.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.04"
+sign      = -1
+label_as_reported = "Despesas/Receitas Operacionais"
+
+[[binding]]
+concept_id = "equity_method_result"
+fidelity   = "exact"
+equivalence_basis = """
+3.04.06 e o resultado de equivalencia patrimonial. Fica em conceito proprio \
+porque no plano da CVM ele esta DENTRO de 3.04 e, portanto, dentro de 3.05 - \
+quem quiser um EBIT sem equivalencia precisa poder isola-lo explicitamente, sem \
+adivinhar.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.04.06"
+sign      = 1
+label_as_reported = "Resultado de Equivalência Patrimonial"
+
+[[binding]]
+concept_id = "ebit_reported"
+fidelity   = "exact"
+equivalence_basis = """
+3.05 "Resultado Antes do Resultado Financeiro e dos Tributos" e exatamente o \
+resultado operacional como a companhia o apresenta - que e o que o conceito \
+ebit_reported pede. Inclui equivalencia patrimonial (3.04.06) por construcao do \
+plano da CVM, e o conceito diz isso na sua boundary_note.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.05"
+sign      = 1
+label_as_reported = "Resultado Antes do Resultado Financeiro e dos Tributos"
+
+# --- Depreciacao e amortizacao ---------------------------------------------
+# As duas grandezas sao distintas e tem conceitos distintos. A DVA e o unico
+# lugar do plano padronizado onde D&A tem codigo estavel entre companhias; no
+# DFC ela mora em subconta de 6.01.01.xx cuja numeracao varia por empresa.
+
+[[binding]]
+concept_id = "d_and_a_retained"
+fidelity   = "exact"
+equivalence_basis = """
+7.04.01 na DVA e a depreciacao, amortizacao e exaustao retidas do valor \
+adicionado no periodo - exatamente a definicao de d_and_a_retained. Negativa na \
+origem (e uma retencao); sign=-1 normaliza para positivo = despesa.
+"""
+[[binding.line]]
+statement = "DVA"
+cd_conta  = "7.04.01"
+sign      = -1
+label_as_reported = "Depreciação, Amortização e Exaustão"
+
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "approximate"
+equivalence_basis = """
+Default sem alias: usa a mesma linha 7.04.01 da DVA como aproximacao da D&A \
+reconhecida no resultado. Escolhida porque 7.04.01 tem codigo estavel em todo o \
+plano padronizado, enquanto a linha de reversao do DFC e subconta especifica de \
+cada companhia - um default baseado no DFC exigiria alias manual antes do \
+primeiro numero existir para qualquer empresa.
+"""
+divergence_note = """
+D&A retida do valor adicionado NAO e a D&A que passou pelo resultado. A parcela \
+capitalizada em estoque so atinge o resultado quando o estoque e vendido, entao \
+as duas divergem - pouco em varejo e servicos, muito em industria de ciclo \
+longo. No GPA FY2023 a diferenca foi de 0,3% (1.133 vs 1.136 MM), mas em FY2022 \
+foi de 46% (1.026 vs 1.902 MM), por conta das operacoes descontinuadas. \
+Onde a precisao importar, escreva o mapeamento da empresa apontando d_and_a_pnl \
+para a linha de reversao do DFC, com fidelity=exact.
+"""
+[[binding.line]]
+statement = "DVA"
+cd_conta  = "7.04.01"
+sign      = -1
+label_as_reported = "Depreciação, Amortização e Exaustão"

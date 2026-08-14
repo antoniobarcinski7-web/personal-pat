@@ -1,0 +1,47 @@
+# GPA - Companhia Brasileira de Distribuicao (cod_cvm 14826).
+#
+# Primeiro mapeamento de empresa do sistema, e a prova do fluxo por projeto:
+# herda tudo da familia e sobrescreve UMA linha - a que a familia so consegue
+# aproximar.
+#
+# Conferido contra a DFP 2023 (doc recebido em 2024-02-21) e a DFP 2024
+# (2025-02-18), ambas ja no bronze.
+
+mapping_id      = "br:cnpj:47508411000156"
+mapping_version = "v1"
+framework       = "ifrs_cpc_br"
+taxonomy        = "cvm.plano_padronizado"
+jurisdiction    = "BR"
+source          = "cvm.dfp"
+parent          = "cvm.plano_padronizado/nao_financeiro"
+entity_id       = "br:cnpj:47508411000156"
+
+verified_by      = "antonio.barcinski"
+verified_against = "DFP CVM 2023 e 2024, cod_cvm 14826, escopos consolidado e individual"
+
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+6.01.01.04 "Depreciação / amortização" e a linha de reversao de D&A na \
+conciliacao do fluxo de caixa indireto do GPA: parte do lucro liquido e soma de \
+volta as despesas que nao consumiram caixa. E, por definicao, a D&A que passou \
+pelo resultado do periodo - exatamente d_and_a_pnl, com fidelity exata, no lugar \
+da aproximacao pela DVA que a familia usa.
+
+Positiva na origem (e uma reversao somada ao lucro), ja na convencao do \
+conceito; sign=+1.
+
+Confere com a DVA em FY2023 (1.136 vs 1.133 MM, 0,3%) e em FY2024 (1.167 vs \
+1.161 MM), e diverge muito em FY2022 (1.902 vs 1.026 MM), ano das operacoes \
+descontinuadas - que e precisamente a razao de existir este override.
+
+O codigo 6.01.01.04 e especifico do GPA. A numeracao das subcontas de 6.01.01 \
+nao e estavel entre companhias, e por isso esta linha nao pode subir para a \
+familia.
+"""
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta  = "6.01.01.04"
+sign      = 1
+label_as_reported = "Depreciação / amortização"

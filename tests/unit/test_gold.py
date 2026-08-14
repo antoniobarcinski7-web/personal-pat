@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from conftest import account_line
+from tests.conftest import account_line
 
 from pat.contracts.common import PeriodType
 from pat.store import gold

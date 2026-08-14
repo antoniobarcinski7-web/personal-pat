@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from conftest import account_line
+from tests.conftest import account_line
 
 from pat.query.asof import AsOf
 from pat.store.gold import build_facts, write_facts

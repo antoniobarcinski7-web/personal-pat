@@ -69,11 +69,117 @@ reapresentar individual **e** consolidado no mesmo documento. `restatements()` n
 filtra escopo por default — de propósito, porque esconder uma das metades daria uma
 contagem que parece certa e está errada.
 
+## A camada semântica não é brasileira
+
+`3.01` não é receita líquida — é *onde* a receita líquida aparece no plano da
+CVM. Manter as duas coisas separadas é o que impede o sistema de virar
+permanentemente brasileiro. Três eixos, nunca colapsados:
+
+- **Conceito** (`revenue_net`) — ideia econômica, sem jurisdição. Vive em
+  `semantics/concepts.py`. `concept_id` é imutável para sempre: significado
+  refinado vira conceito novo, não `revenue_net@v2`.
+- **Endereço** (`LineAddress`) — onde a ideia aparece numa taxonomia. Opaco
+  fora do adapter daquela taxonomia.
+- **Regime** — framework, jurisdição e fonte são metadados do *mapeamento*.
+  Nunca da métrica.
+
+Consequências que não se negociam:
+
+1. **Nenhum módulo em `definitions/` ou `concepts.py` pode citar `cd_conta`,
+   `cod_cvm` ou elemento XBRL** — nem em comentário. `tests/semantics/
+   test_layering.py` faz a checagem por AST e falha se alguém escorregar.
+2. **Só `frameworks/cvm_dfp/resolver.py` importa `pat.query`.** O motor fala
+   com o mundo pelo Protocol `FactResolver`. Plugar a SEC é escrever um adapter
+   e um resolver — `tests/semantics/test_second_framework.py` roda as métricas
+   reais contra um regime fictício em dólar justamente para provar isso.
+3. **Equivalência semântica é afirmada, nunca deduzida.** Não existe casamento
+   por rótulo em lugar nenhum. Todo `[[binding]]` exige `equivalence_basis`
+   dizendo por que aquela linha é aquele conceito. `label_as_reported` é
+   conferido por `pat mapping-check` e jamais usado para busca — conta
+   renomeada tem que quebrar teste, não resolver calada para outra coisa.
+
+## Fidelidade: aproximar pode, esconder não
+
+`fidelity` no binding é `exact`, `approximate` ou `partial`, e qualquer coisa
+diferente de `exact` **exige** `divergence_note`. A fidelidade sobe pelo grafo:
+o `MetricResult` carrega a mais fraca de toda a cadeia.
+
+O caso que motiva isso é `d_and_a_pnl`. A D&A que passou pelo resultado tem
+código estável no DFC de *cada empresa*, mas não no plano padronizado; a família
+default aproxima pela DVA (7.04.01), que é `d_and_a_retained` — grandeza
+economicamente diferente. No GPA a diferença é 0,3% em FY2023 e 46% em FY2022.
+Um sistema que tratasse as duas como sinônimas erraria por quase R$ 900 milhões
+num ano e acertaria no outro: erro intermitente, o pior tipo de achar.
+
+Por isso são conceitos separados, e por isso `ebitda@v1` conceitualmente usa
+`d_and_a_pnl` mesmo quando o único binding disponível é aproximado. O número
+sai, marcado.
+
+## Versões de métrica
+
+`ebitda@v1` depende de `ebit@v1`, pinado. Publicar `ebit@v2` deixa `ebitda@v1`
+bit a bit idêntica — é assim que análise antiga continua reproduzindo. Mudou a
+aritmética ou o conjunto de conceitos? Módulo novo, versão nova, os dois
+registrados ao mesmo tempo. O antigo nunca é editado.
+
+Três coisas entram em todo `MetricResult` porque as três podem mudar um número:
+versão da métrica, `as_of`, e o sha256 da **cadeia** de mapeamento (não só do
+arquivo da empresa — editar a família muda o resultado sem tocar no arquivo
+dela).
+
+## Decisões contábeis já tomadas
+
+Não reabrir sem versão nova:
+
+- **A1 — `ebit@v1` inclui equivalência patrimonial.** É o resultado operacional
+  como reportado. No GPA FY2023: EBIT de R$ 677 MM contém R$ 768 MM de
+  equivalência; sem ela seria −R$ 91 MM. EBIT ex-equivalência é métrica nova.
+- **A3 — `lucro_liquido@v1` será o atribuível à controladora.** Resultado total
+  (incluindo não controladores) é métrica separada, sem fallback automático.
+- **A4 — dívida bruta trata arrendamento explicitamente**, com o tratamento
+  visível no resultado. Sem normalização silenciosa.
+- **EBITDA ajustado divulgado** é conceito e fonte (`issuer`) separados. Nunca
+  fallback de `ebitda@v1`.
+
+## Como adicionar uma empresa
+
+Um TOML em `semantics/mappings/`, herdando da família e sobrescrevendo só o que
+diverge — o mapeamento do GPA tem *um* binding. O caminho:
+
+```
+pat concepts                       que conceitos existem
+pat accounts --cod-cvm N --statement DFC_MI --period-end ... --as-of ...
+pat mapping-check --cod-cvm N --period-end ... --as-of ...
+```
+
+`pat accounts` existe para um humano escolher a linha. Não é inferência, e não
+deve virar uma.
+
+## Insumo ausente
+
+Nunca zero, nunca parcial, nunca `None` que se lê como zero. `MetricUnavailable`
+com motivo nomeado, conceito que faltou, endereços tentados e o que fazer. Não
+existe `allow_missing=True`, e não deve passar a existir.
+
+Moeda nunca é convertida implicitamente. Insumos em moedas diferentes param o
+cálculo.
+
 ## Testes
 
 - `pytest` — suite padrão, sem rede.
 - `pytest -m network` — contra fontes públicas reais. Detecta mudança de layout de
   URL na origem; não roda em CI por depender de terceiro.
+
+Os golden tests da Fase 2 (`tests/semantics/golden_gpa.py`) transcrevem linhas
+reais da DFP do GPA à mão, e passam pelo parser e pelo builder de verdade — não
+inserem fatos direto no gold. O par offline/network é deliberado: o offline prova
+que o cálculo está certo, o de rede prova que o *mapeamento* ainda aponta para as
+linhas certas no que a CVM publica hoje. Conta renumerada na origem só aparece
+no segundo.
+
+Helpers de teste são importados como `tests.conftest`, com nome qualificado.
+Importar `conftest` solto colide assim que existe mais de um `conftest.py` na
+árvore.
 
 Ao adicionar um provider, escreva os testes de `resolve()` sem rede (construção de
 URL, validação de parâmetro) e deixe só a verificação de layout em `-m network`.

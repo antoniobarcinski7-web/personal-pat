@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from conftest import DocumentSpec, LineSpec, ZipSpec, account_line, build_dfp_zip
+from tests.conftest import DocumentSpec, LineSpec, ZipSpec, account_line, build_dfp_zip
 
 from pat.parse.cvm_dfp import parse_dfp_zip
 from pat.store.silver import count, write_lines

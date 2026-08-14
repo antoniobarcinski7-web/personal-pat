@@ -47,6 +47,7 @@ class DocumentSpec:
     doc_id: str
     cnpj: str = CNPJ
     cod_cvm: str = COD_CVM
+    denom: str = DENOM
 
 
 @dataclass
@@ -66,6 +67,7 @@ class LineSpec:
     coluna_df: str | None = None
     cnpj: str = CNPJ
     cod_cvm: str = COD_CVM
+    denom: str = DENOM
 
 
 @dataclass
@@ -75,6 +77,12 @@ class ZipSpec:
     dre_con: list[LineSpec] = field(default_factory=list)
     bpa_con: list[LineSpec] = field(default_factory=list)
     dmpl_con: list[LineSpec] = field(default_factory=list)
+    flow_members: dict[tuple[str, str], list[LineSpec]] = field(default_factory=dict)
+    """Demonstracoes de fluxo arbitrarias, por (statement, 'con'|'ind').
+
+    A Fase 2 precisa de DVA e DFC_MI, e precisa dos dois escopos; os campos
+    fixos acima cobriam so o que a Fase 1 exercitava.
+    """
 
 
 def _csv(columns: list[str], rows: list[list[str]]) -> bytes:
@@ -85,7 +93,7 @@ def _csv(columns: list[str], rows: list[list[str]]) -> bytes:
 
 def _flow_row(line: LineSpec, dt_refer: str) -> list[str]:
     return [
-        line.cnpj, line.dt_refer or dt_refer, str(line.versao), DENOM, line.cod_cvm,
+        line.cnpj, line.dt_refer or dt_refer, str(line.versao), line.denom, line.cod_cvm,
         "DF Consolidado - Demonstração do Resultado", line.moeda, line.escala,
         line.ordem, line.dt_ini or "", line.dt_fim,
         line.cd_conta, line.ds_conta, line.valor, "S",
@@ -103,7 +111,7 @@ def build_dfp_zip(spec: ZipSpec) -> bytes:
                 INDEX_COLUMNS,
                 [
                     [
-                        doc.cnpj, doc.dt_refer, str(doc.versao), DENOM, doc.cod_cvm,
+                        doc.cnpj, doc.dt_refer, str(doc.versao), doc.denom, doc.cod_cvm,
                         "DFP", doc.doc_id, doc.dt_receb,
                         f"http://rad.cvm.gov.br/doc/{doc.doc_id}",
                     ]
@@ -125,6 +133,14 @@ def build_dfp_zip(spec: ZipSpec) -> bytes:
                 del row[9]  # remove DT_INI_EXERC
                 rows.append(row)
             zf.writestr(f"dfp_cia_aberta_BPA_con_{spec.year}.csv", _csv(INSTANT_COLUMNS, rows))
+
+        for (statement, scope), lines in sorted(spec.flow_members.items()):
+            if not lines:
+                continue
+            zf.writestr(
+                f"dfp_cia_aberta_{statement}_{scope}_{spec.year}.csv",
+                _csv(FLOW_COLUMNS, [_flow_row(line, dt_refer_default) for line in lines]),
+            )
 
         if spec.dmpl_con:
             rows = []

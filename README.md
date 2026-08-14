@@ -6,8 +6,9 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 1.** Espinha dorsal de dados, mais o pipeline
-bronze → silver → gold e consulta `AS OF`. Não há agente nem métricas canônicas
+**Estado atual: Fase 2.** Espinha dorsal de dados (bronze → silver → gold,
+consulta `AS OF`) mais a camada semântica: conceitos financeiros universais,
+mapeamentos por regime contábil e métricas canônicas versionadas. Não há agente
 ainda — isso é deliberado (ver "Fases").
 
 ---
@@ -43,7 +44,7 @@ L5  INTERFACE     CLI · relatório versionado
 L4  AGENTE        planner → retriever → coder → charter → writer → critic
                   ↑ só emite CÓDIGO e TEXTO, nunca números
 L3  EXECUÇÃO      sandbox determinístico, DuckDB read-only
-L2  SEMÂNTICA     métricas canônicas versionadas (ebitda@v2, roic@v1…)
+L2  SEMÂNTICA     conceito universal → endereço de taxonomia → métrica versionada
 L1  DADOS         bronze (raw imutável) → prata (tipado) → ouro (point-in-time)
 L0  FONTES        CVM · B3 · BCB · IBGE · RI · (vendor licenciado, futuro)
 ```
@@ -90,6 +91,111 @@ recurso lógico apontando para hashes diferentes são a evidência primária de 
 reapresentação** — e ambas as versões continuam em disco.
 
 `pat history cvm.dfp 2024` mostra exatamente isso.
+
+---
+
+## A camada semântica (L2)
+
+O problema que ela resolve: `3.01` não é "receita líquida". É onde a receita
+líquida aparece **no plano de contas da CVM**. Confundir as duas coisas é o que
+torna um sistema de research permanentemente brasileiro.
+
+Por isso três eixos ficam separados:
+
+```
+CONCEITO     revenue_net, d_and_a_pnl, capex…       universal, sem jurisdição
+    ▲
+    │ binding — afirmação humana de equivalência semântica
+    │
+ENDEREÇO     onde a ideia aparece numa TAXONOMIA
+             BR: cvm.plano_padronizado  → DRE/3.01
+             US: us-gaap.xbrl           → us-gaap:Revenue… (não implementado)
+    ▲
+REGIME       framework · jurisdição · fonte  — metadado do MAPEAMENTO
+```
+
+`ebitda@v1 = ebit@v1 + d_and_a@v1` é escrita uma vez e vale em qualquer regime.
+Os módulos em `semantics/definitions/` **não podem** mencionar `cd_conta` — há
+um teste que falha se mencionarem, e outro que roda as mesmas métricas contra um
+regime fictício em dólar para provar que a promessa é real.
+
+### Nada de sinônimo automático
+
+"Net Revenue", "Revenue" e "Sales" nunca são equiparados por semelhança de
+rótulo. Um `[[binding]]` só existe com `equivalence_basis` preenchido — a
+justificativa de *por que* aquela linha é aquele conceito. Rótulos são gravados
+(`label_as_reported`) e conferidos por `pat mapping-check`, mas jamais usados
+para busca: uma conta renomeada tem que quebrar o teste, não resolver em
+silêncio para outra coisa.
+
+### Fidelidade, e por que ela viaja
+
+Nem todo regime publica todo conceito com a mesma limpeza. `d_and_a_pnl` — a
+depreciação que passou pelo resultado — tem código estável no fluxo de caixa de
+**cada empresa**, mas não no plano padronizado. Então:
+
+| | binding | fidelidade |
+|---|---|---|
+| família default | DVA 7.04.01 (D&A retida do valor adicionado) | `approximate` |
+| mapeamento do GPA | DFC_MI 6.01.01.04 (reversão de D&A) | `exact` |
+
+A aproximação é legítima e útil; escondê-la não seria. `fidelity` sobe pelo
+grafo até o `MetricResult` — um EBITDA montado sobre binding aproximado **diz
+isso**, em todo relatório. No GPA a diferença é de 0,3% em FY2023 e de 46% em
+FY2022 (operações descontinuadas): exatamente o erro intermitente que passa
+despercebido quando o sistema trata as duas grandezas como sinônimas. Por isso
+`d_and_a_pnl` e `d_and_a_retained` são conceitos **distintos**.
+
+### Fluxo por projeto
+
+Um arquivo TOML por empresa, herdando da família e sobrescrevendo só o que
+diverge. O mapeamento do GPA tem **um** binding.
+
+```bash
+pat concepts                       # que conceitos existem, e o que significam
+pat accounts --cod-cvm 14826 --statement DFC_MI \
+    --period-end 2023-12-31 --as-of 2025-06-30   # o que a empresa publicou
+# escolha a linha, escreva o binding com equivalence_basis, e então:
+pat mapping-check --cod-cvm 14826 --period-end 2023-12-31 --as-of 2025-06-30
+```
+
+`pat accounts` é ferramenta para um humano escolher a linha. Não há inferência
+automática em lugar nenhum do caminho.
+
+### Métricas da Fase 2
+
+`receita_liquida@v1` · `ebit@v1` · `d_and_a@v1` · `ebitda@v1` ·
+`margem_ebitda@v1`
+
+Decisões contábeis tomadas explicitamente, e registradas no `rationale` de cada
+definição:
+
+- **`ebit@v1` inclui equivalência patrimonial**, por ser o resultado
+  operacional *como reportado*. Não é detalhe: no GPA FY2023 o EBIT de
+  R$ 677 MM contém R$ 768 MM de equivalência — sem ela seria −R$ 91 MM. Um EBIT
+  ex-equivalência é outra métrica, não uma correção desta.
+- **`ebitda@v1` não é EBITDA ajustado divulgado.** Esse vem do RI, tier
+  `issuer`, não é derivável da DFP, e jamais serve de fallback.
+- **Versões são pinadas.** `ebitda@v1` depende de `ebit@v1`, nunca do "ebit
+  atual". Publicar `ebit@v2` deixa `ebitda@v1` bit a bit idêntica.
+
+```bash
+pat metric ebitda@v1 --cod-cvm 14826 --period-end 2023-12-31 --as-of 2024-06-30
+pat metric ebitda@v1 --cod-cvm 14826 --period-end 2023-12-31 --as-of 2025-06-30
+```
+
+As duas devolvem números diferentes — R$ 1.813 MM e R$ 1.796 MM — porque a
+reapresentação do GPA atravessa a camada semântica intacta. Cada resultado traz
+`knowledge_date`, `fidelity`, hash da cadeia de mapeamento e o `fact_id` de cada
+insumo, que resolve até o blob no bronze.
+
+### Quando não dá para calcular
+
+Nunca zero, nunca parcial, nunca `None` que se lê como zero. `MetricUnavailable`
+carrega motivo nomeado (`missing_concept`, `missing_fact_as_of`, `no_mapping`,
+`mixed_currency`, `scope_not_available`, `division_by_zero`…), o conceito que
+faltou, os endereços tentados e o que fazer a respeito. Moeda **nunca** é
+convertida implicitamente.
 
 ---
 
@@ -142,8 +248,8 @@ que era verdade. É esse o critério de conclusão da Fase 1.
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede)
-uv run pytest -m network   # contra a CVM real
+uv run pytest              # suite padrão (sem rede) — 243 testes
+uv run pytest -m network   # contra a CVM real — 11 testes
 ```
 
 `uv lock --check` verifica que o lockfile ainda reflete o `pyproject.toml`.
@@ -161,7 +267,8 @@ src/pat/
 │   ├── documents.py   RawDocument, Retrieval, ResourceRef, HttpMeta
 │   ├── lineage.py     Lineage, Run
 │   ├── silver.py      AccountLine — uma linha de CSV da CVM, tipada
-│   └── facts.py       Fact bitemporal
+│   ├── facts.py       Fact bitemporal
+│   └── semantics.py   Concept, LineAddress, ConceptBinding, Mapping, MetricResult
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
@@ -174,6 +281,16 @@ src/pat/
 │   ├── silver.py      persiste AccountLine; idempotente por silver_id
 │   ├── gold.py        escala, tipo de período, validação → Fact. Append-only.
 │   └── db.py          conexão e esquema
+├── semantics/       L2 — conceitos universais, mapeamentos por regime, métricas
+│   ├── concepts.py    catálogo universal; não menciona plano de contas
+│   ├── definitions/   uma métrica por módulo, versionada; proibido importar frameworks/
+│   ├── mappings/br/   dados TOML: família CVM + um arquivo por empresa
+│   ├── loader.py      TOML → Mapping, herança, sha256 da cadeia
+│   ├── registry.py    registro explícito + validação do DAG no import
+│   ├── engine.py      executa o grafo contra um FactResolver (porta)
+│   ├── resolver.py    Protocol FactResolver — a fronteira com a fonte
+│   ├── check.py       os bindings ainda resolvem na origem?
+│   └── frameworks/cvm_dfp/   único lugar que conhece cd_conta e cod_cvm
 ├── query/asof.py    única porta de leitura do gold; toda consulta exige AS OF
 ├── audit/run.py     manifesto de execução (versão, git sha, timestamps)
 ├── ingest.py        orquestração: resolve → fetch → put → record
@@ -197,7 +314,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 |---|---|---|---|
 | **0** | contratos, bronze, provider CVM, catálogo | todo byte rastreável à origem | ✅ |
 | **1** | silver + gold bitemporal + `query AS OF` | consulta prova diferença antes/depois de uma reapresentação | ✅ |
-| **2** | semantics: ~15 métricas versionadas | golden tests batendo com demonstrações conferidas à mão | |
+| **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | sandbox + coder + charter | pergunta → código → número correto, sem LLM fazendo conta | |
 | **4** | planner, writer, critic, pipeline | relatório com toda afirmação citando `fact_id` | |
 | **5** | B3 (preços, proventos), BCB, IBGE | | |
@@ -209,11 +326,18 @@ produz erros eloquentes e confiantes — o pior resultado possível para researc
 ## Riscos conhecidos
 
 1. **Reapresentações da CVM** — endereçado por I1 + bronze content-addressed.
-2. **Planos de conta heterogêneos entre empresas** — exigirá trabalho manual por
-   empresa em `semantics/aliases`. Maior fonte de esforço não-automatizável do
-   projeto; não há atalho.
+2. **Planos de conta heterogêneos entre empresas** — endereçado por
+   `semantics/mappings/`: um TOML por empresa, herdando da família e
+   sobrescrevendo só o que diverge. Continua sendo a maior fonte de esforço
+   não-automatizável do projeto; não há atalho, e de propósito — a alternativa
+   seria inferir equivalência por rótulo.
 3. **Ajustes não-padronizados** (EBITDA ajustado, não-recorrentes) — por isso métricas
-   são versionadas e explícitas, nunca inferidas pelo LLM.
+   são versionadas e explícitas, nunca inferidas pelo LLM. EBITDA ajustado
+   divulgado é conceito e fonte separados, jamais fallback de `ebitda@v1`.
+
+6. **Aproximação invisível** — endereçado por `fidelity` no binding, que sobe
+   até o `MetricResult`. Um número aproximado que se apresenta como exato é pior
+   que número nenhum.
 4. **Eventos societários** (splits, bonificações, incorporações) — tratamento próprio
    antes de qualquer série de preços. Fase 5.
 5. **Deriva de modelo** — mitigado por cache de LLM endereçado por conteúdo e model id

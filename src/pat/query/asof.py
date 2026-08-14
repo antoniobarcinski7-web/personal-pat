@@ -67,6 +67,15 @@ class FactView:
 
 
 @dataclass(frozen=True)
+class EntityRef:
+    """Identificadores de uma companhia presente no gold."""
+
+    entity_id: str
+    cod_cvm: int
+    denom_cia: str
+
+
+@dataclass(frozen=True)
 class Restatement:
     """Duas versoes conhecidas do mesmo periodo, com valores diferentes."""
 
@@ -122,12 +131,15 @@ class DocumentProvenance:
         return bronze_root / self.storage_path
 
 
-_SELECT = """
-    SELECT fact_id, entity_id, cod_cvm, denom_cia, statement, consolidated,
+_FACT_COLUMNS = """fact_id, entity_id, cod_cvm, denom_cia, statement, consolidated,
            coluna_df, cd_conta, ds_conta, period_type, period_start, period_end,
            knowledge_date, value, unit, currency, ordem_exerc,
            source_doc_id, source_doc_version, content_sha256, retrieval_id,
-           locator, silver_id
+           locator, silver_id"""
+"""Na ordem exata dos campos de `FactView` - `_to_view` desempacota por posicao."""
+
+_SELECT = f"""
+    SELECT {_FACT_COLUMNS}
     FROM gold_fact
 """
 
@@ -290,6 +302,74 @@ class AsOf:
                     continue
             out.append(restatement)
         return out
+
+    def entity(self, entity_id: str) -> EntityRef | None:
+        """Traduz a chave canonica interna para os identificadores da CVM.
+
+        Existe para que a camada semantica possa falar so `entity_id` e ainda
+        assim chegar ao gold, sem que ela mesma emita SQL: toda leitura do gold
+        continua passando por esta classe.
+        """
+        row = self.conn.execute(
+            """
+            SELECT entity_id, cod_cvm, denom_cia
+            FROM gold_fact
+            WHERE entity_id = ?
+            ORDER BY knowledge_date DESC, fact_id ASC
+            LIMIT 1
+            """,
+            [entity_id],
+        ).fetchone()
+        return EntityRef(*row) if row else None
+
+    def entity_by_cod_cvm(self, cod_cvm: int) -> EntityRef | None:
+        """Caminho inverso de `entity`, para a linha de comando: o usuario
+        pensa em codigo CVM, o sistema pensa em `entity_id`."""
+        row = self.conn.execute(
+            """
+            SELECT entity_id, cod_cvm, denom_cia
+            FROM gold_fact
+            WHERE cod_cvm = ?
+            ORDER BY knowledge_date DESC, fact_id ASC
+            LIMIT 1
+            """,
+            [cod_cvm],
+        ).fetchone()
+        return EntityRef(*row) if row else None
+
+    def accounts(
+        self,
+        *,
+        cod_cvm: int,
+        statement: str,
+        period_end: date,
+        as_of: date,
+        consolidated: bool = True,
+    ) -> list[FactView]:
+        """Plano de contas efetivo de uma companhia num periodo.
+
+        Ferramenta de quem escreve mapeamento: mostra as contas que a
+        companhia de fato publicou, com rotulo e valor, para um humano
+        escolher a linha. Nao existe para o sistema adivinhar nada - o
+        casamento continua sendo escrito a mao e justificado.
+        """
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM (
+                SELECT {_FACT_COLUMNS},
+                       row_number() OVER (
+                           PARTITION BY cd_conta, coluna_df
+                           ORDER BY knowledge_date DESC, source_doc_version DESC, fact_id ASC
+                       ) AS rn
+                FROM gold_fact
+                WHERE cod_cvm = ? AND statement = ? AND consolidated = ?
+                  AND period_end = ? AND knowledge_date <= ?
+            ) WHERE rn = 1
+            ORDER BY cd_conta, coluna_df
+            """,
+            [cod_cvm, statement, consolidated, period_end, as_of],
+        ).fetchall()
+        return [_to_view(row[:-1]) for row in rows]
 
     def provenance(self, fact_id: str) -> DocumentProvenance | None:
         """Cadeia completa de um fato ate os bytes de origem."""

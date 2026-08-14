@@ -14,7 +14,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from conftest import CNPJ_DIGITS, COD_CVM, DocumentSpec, LineSpec, ZipSpec, build_dfp_zip
+from tests.conftest import CNPJ_DIGITS, COD_CVM, DocumentSpec, LineSpec, ZipSpec, build_dfp_zip
 
 from pat.parse import cvm_dfp
 from pat.parse.cvm_dfp import EXTRACTOR, EXTRACTOR_VERSION, ParseError, parse_dfp_zip

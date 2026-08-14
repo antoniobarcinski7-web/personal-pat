@@ -28,6 +28,9 @@ packages = ["src/pat"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." poe a raiz no path para que os helpers sejam importados como
+# `tests.conftest`, com nome qualificado. Importar `conftest` solto colide
+# assim que existe mais de um conftest.py na arvore de testes.
+pythonpath = ["src", "."]
 addopts = "-q -m 'not network'"
 markers = ["network: exige acesso a rede (fontes publicas reais)"]

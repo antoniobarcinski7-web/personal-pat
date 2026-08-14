@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import ClassVar
 
 import pytest
-from conftest import DocumentSpec, LineSpec, ZipSpec, build_dfp_zip, restatement_fixture
+from tests.conftest import DocumentSpec, LineSpec, ZipSpec, build_dfp_zip, restatement_fixture
 
 from pat.audit.run import new_run
 from pat.build import BuildError, build_dataset
