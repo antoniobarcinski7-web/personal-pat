@@ -22,6 +22,12 @@ Semantica (Fase 2)
     pat accounts --statement DVA ...    plano de contas efetivo (para mapear)
     pat mapping-check --cod-cvm ...     os bindings ainda resolvem?
 
+Pesquisa (Fase 3, Milestone 1 - deterministico, sem LLM)
+
+    pat capability                      o que o sistema sabe executar
+    pat ask --plan-file p.json          executa um plano ja escrito
+    pat ask --plan-file p.json --dry-run   valida e para antes de executar
+
 Toda consulta da Fase 2 exige `--as-of`, como as da Fase 1: nao existe atalho
 que devolva "o valor" sem dizer segundo quando.
 """
@@ -31,6 +37,8 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, date, datetime
+
+import duckdb
 
 from pat import __version__
 from pat.audit.run import new_run
@@ -632,11 +640,273 @@ def cmd_mapping_check(args) -> int:
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# Fase 3 - camada de pesquisa (Milestone 1: sem LLM)
+# ---------------------------------------------------------------------------
+
+
+def cmd_capability(args) -> int:
+    """O que o sistema sabe fazer. Sem warehouse, sai so a parte de catalogo."""
+    from pat.research.capability import build_snapshot, snapshot_sha256
+
+    conn = None
+    paths = resolve_paths(args.home)
+    if paths.warehouse.exists():
+        conn = connect(paths.warehouse, read_only=True)
+    try:
+        as_of = date.fromisoformat(args.as_of) if args.as_of else None
+        snapshot = build_snapshot(conn, as_of=as_of)
+
+        if args.json:
+            from pat.research.canonical import canonical_bytes
+
+            print(canonical_bytes(snapshot).decode("utf-8"))
+            return 0
+
+        print(f"capability_sha256  {snapshot_sha256(snapshot)}")
+        if as_of:
+            print(f"cobertura AS OF    {as_of}")
+        print()
+
+        print(f"conceitos ({len(snapshot.concepts)})")
+        for card in snapshot.concepts:
+            print(f"  {card.concept_id:<24} {card.dimension}/{card.period_kind}")
+        print(f"\nmetricas ({len(snapshot.metrics)})")
+        for card in snapshot.metrics:
+            deps = ", ".join(card.requires_metrics) or ", ".join(card.requires_concepts)
+            print(f"  {card.ref:<24} [{card.dimension}]  <- {deps}")
+        print(f"\nmapeamentos ({len(snapshot.mappings)})")
+        for card in snapshot.mappings:
+            escopo = f"empresa {card.entity_id}" if card.entity_id else "familia"
+            marca = "  [default]" if card.is_default_for_source else ""
+            print(f"  {card.mapping_id:<40} {escopo}{marca}  fidelidade {card.weakest_fidelity}")
+        print(f"\nderivacoes ({len(snapshot.derivations)})")
+        for card in snapshot.derivations:
+            print(f"  {card.op:<12} aridade {card.arity:<5} -> {card.output_dimension}")
+
+        print(f"\nentidades ({len(snapshot.entities)})")
+        if not snapshot.entities:
+            print("  nenhuma. Rode `pat init`, `pat fetch` e `pat build` primeiro.")
+        for card in snapshot.entities:
+            periodos = ", ".join(str(p) for p in card.period_ends)
+            conferido = "mapeamento proprio" if card.has_own_mapping else "familia default"
+            print(f"  {card.entity_id}  ({card.denom_cia})")
+            print(f"    cod_cvm {card.cod_cvm} · {conferido}")
+            print(f"    periodos {periodos}")
+        return 0
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _print_research(outcome, *, plan, question) -> None:
+    print(f"QUESTION  {plan.question_id[:12]}  as_of {plan.as_of}  scope {plan.scope}")
+    print(f"PLAN      {outcome.plan_id[:12]}  {plan.objective}")
+    print(f"CAPABILITY {outcome.capability_sha256[:12]}")
+    print("\n  steps")
+    for step in plan.steps:
+        if step.step_kind == "metric":
+            print(
+                f"    {step.step_id:<16} metric  {str(step.metric):<20} "
+                f"{step.entity_id}  {step.period_end}"
+            )
+        else:
+            print(
+                f"    {step.step_id:<16} deriv   {step.op:<20} "
+                f"[{', '.join(step.inputs)}]"
+            )
+    print(f"\n  outputs      {', '.join(plan.outputs)}")
+    for premissa in plan.assumptions:
+        print(f"  assumption   {premissa}")
+    print(f"  unresolved   {len(plan.unresolved) or '(nenhuma)'}")
+
+
+def _print_problems(outcome) -> None:
+    for violation in outcome.violations:
+        onde = f" [{violation.step_id}]" if violation.step_id else ""
+        print(f"  {violation.code}{onde}: {violation.message}", file=sys.stderr)
+        if violation.remedy:
+            print(f"    saida: {violation.remedy}", file=sys.stderr)
+    for issue in outcome.issues:
+        onde = f" [{issue.step_id}]" if issue.step_id else ""
+        print(f"  {issue.code}{onde}: {issue.message}", file=sys.stderr)
+        if issue.remedy:
+            print(f"    saida: {issue.remedy}", file=sys.stderr)
+
+
+def _record_manifest(args, manifest) -> bool | None:
+    """Grava o manifesto da corrida. None quando nao houve execucao.
+
+    Conexao propria, de escrita, aberta *depois* que a de leitura fechou: a
+    execucao le o warehouse em modo somente-leitura e isso nao muda. O
+    manifesto e registro de auditoria, nao dado analitico, e entra pela unica
+    porta que escreve.
+    """
+    if manifest is None:
+        return None
+
+    from pat.store.research import write_manifest
+
+    conn = connect(resolve_paths(args.home).warehouse)
+    try:
+        migrate(conn)  # research_run e aditiva: warehouse antigo migra sozinho
+        return write_manifest(conn, manifest)
+    finally:
+        conn.close()
+
+
+def cmd_ask(args) -> int:
+    """Executa um plano ja escrito. Milestone 1 nao chama modelo nenhum."""
+    from pathlib import Path
+
+    from pat.audit.run import current_git_sha
+    from pat.research import load_envelope, review_plan, run_plan
+
+    if not args.plan_file:
+        print(
+            "Milestone 1 nao tem planejador: passe --plan-file com um envelope "
+            "{question, plan}.\nO planejador por LLM entra no Milestone 2.",
+            file=sys.stderr,
+        )
+        return 2
+
+    payload = Path(args.plan_file).read_bytes()
+    envelope = load_envelope(payload)
+    plan, question = envelope.plan, envelope.question
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        if args.dry_run:
+            outcome = review_plan(conn, plan=plan, question=question)
+            _print_research(outcome, plan=plan, question=question)
+            print()
+            if not outcome.executable:
+                print("VALIDACAO  RECUSADO", file=sys.stderr)
+                _print_problems(outcome)
+                return 1
+            print("VALIDACAO  ok - 0 violacoes, 0 pendencias")
+            print("nao executado (--dry-run)")
+            return 0
+
+        outcome = run_plan(conn, plan=plan, question=question, git_sha=current_git_sha())
+        # Libera o lock do warehouse antes de gravar: o DuckDB nao aceita uma
+        # conexao de escrita enquanto a de leitura do mesmo arquivo esta aberta.
+        conn.close()
+        gravado = _record_manifest(args, outcome.manifest)
+
+        _print_research(outcome, plan=plan, question=question)
+        print()
+        if not outcome.executable:
+            print("VALIDACAO  RECUSADO", file=sys.stderr)
+            _print_problems(outcome)
+            return 1
+
+        for result in outcome.execution.results:
+            if result.metric_result is not None:
+                print()
+                _print_metric(result.metric_result)
+            else:
+                derivada = result.derived
+                print(f"\n{result.step_id}   [{derivada.op}]")
+                print(f"  valor      {derivada.value}")
+                print(f"  fidelidade {derivada.fidelity}")
+                print(f"  derivado de {', '.join(d[:12] for d in derivada.derived_from)}")
+
+        for failure in outcome.execution.failures:
+            print(f"\n{failure.step_id}: INDISPONIVEL", file=sys.stderr)
+            print(f"  motivo   {failure.reason}", file=sys.stderr)
+            print(f"  {failure.message}", file=sys.stderr)
+            if failure.unavailable and failure.unavailable.tried:
+                for endereco in failure.unavailable.tried:
+                    print(f"  tentado  {endereco}", file=sys.stderr)
+            if failure.remedy:
+                print(f"  saida    {failure.remedy}", file=sys.stderr)
+
+        if outcome.answer is None:
+            print("\nsem resposta: alguma saida do plano nao foi calculada.", file=sys.stderr)
+            return 1
+
+        print("\nRESPOSTA")
+        print(f"  {outcome.answer.prose}")
+        for aviso in outcome.answer.warnings:
+            print(f"  aviso [{aviso.kind}] {aviso.message}")
+        if not outcome.answer.warnings:
+            print("  (sem ressalvas)")
+
+        print("\nCITACOES")
+        for claim in outcome.answer.claims:
+            if claim.claim_kind == "numeric":
+                print(f"  {claim.token:<28} {claim.rendered_value:<16} {claim.result_id[:12]}")
+                print(f"    {claim.means}")
+
+        manifesto = outcome.manifest
+        print("\nMANIFESTO")
+        print(f"  manifest_id  {manifesto.manifest_id}")
+        print(f"  plan_id      {manifesto.plan_id}")
+        print(f"  metricas     {', '.join(manifesto.metric_versions)}")
+        print(f"  mapeamentos  {', '.join(s[:12] for s in manifesto.mapping_sha256s)}")
+        print(f"  fatos        {len(manifesto.fact_ids)} folha(s)")
+        print(f"  pat          {manifesto.pat_version} · git {manifesto.git_sha or '-'}")
+        print(f"  registrado   {'sim' if gravado else 'ja constava'} em research_run")
+        return 0
+    finally:
+        conn.close()
+
+
 def cmd_runs(args) -> int:
+    """Corridas de ingestao por default; de pesquisa com --research.
+
+    Duas listas separadas porque sao dois manifestos distintos: um prova de
+    onde vieram os *bytes*, outro de onde veio um *numero*.
+    """
+    if args.research:
+        return _print_research_runs(args)
+
     store, catalog, conn = _open(args)
     for run_id, command, status, started, finished in catalog.recent_runs(args.limit):
         print(f"{run_id}  {status:<10} {started}  {command}")
     conn.close()
+    return 0
+
+
+def _print_research_runs(args) -> int:
+    from pat.store.research import read_manifest, recent_manifests
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        if isinstance(args.research, str):
+            row = read_manifest(conn, args.research)
+            if row is None:
+                print(f"manifesto desconhecido: {args.research}", file=sys.stderr)
+                return 1
+            rows = [row]
+        else:
+            rows = recent_manifests(conn, args.limit)
+            if not rows:
+                print("nenhuma corrida de pesquisa registrada. Rode `pat ask`.")
+                return 0
+    except duckdb.CatalogException:
+        print(
+            "warehouse sem a tabela research_run. Rode `pat init` para migrar.",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        conn.close()
+
+    for row in rows:
+        estado = "ok" if row.outputs_available else "SAIDA INDISPONIVEL"
+        print(f"{row.manifest_id}  {estado}")
+        print(f"  executado   {row.executed_at}  AS OF {row.as_of}")
+        print(f"  plano       {row.plan_id[:12]}  pergunta {row.question_id[:12]}")
+        print(f"  capability  {row.capability_sha256[:12]}")
+        print(f"  metricas    {', '.join(row.metric_versions) or '-'}")
+        print(f"  mapeamentos {', '.join(s[:12] for s in row.mapping_sha256s) or '-'}")
+        print(f"  resultados  {len(row.result_ids)}  ·  fatos folha {len(row.fact_ids)}")
+        print(f"  pat         {row.pat_version} · python {row.python_version} · "
+              f"git {row.git_sha or '-'}")
     return 0
 
 
@@ -755,8 +1025,40 @@ def build_parser() -> argparse.ArgumentParser:
     _metric_key(p_mcheck)
     p_mcheck.set_defaults(func=cmd_mapping_check)
 
+    # -- Fase 3: camada de pesquisa ------------------------------------------
+
+    p_cap = sub.add_parser("capability", help="o que o sistema sabe executar")
+    p_cap.add_argument("--as-of", dest="as_of", help="AAAA-MM-DD; recorta a cobertura")
+    p_cap.add_argument("--json", action="store_true", help="bytes canonicos do snapshot")
+    p_cap.set_defaults(func=cmd_capability)
+
+    p_ask = sub.add_parser("ask", help="executa um plano de pesquisa (sem LLM)")
+    p_ask.add_argument(
+        "--plan-file",
+        dest="plan_file",
+        required=True,
+        help="JSON com {question, plan}. O planejador por LLM e do Milestone 2.",
+    )
+    p_ask.add_argument("--dry-run", dest="dry_run", action="store_true", help="valida e para")
+    p_ask.add_argument(
+        "--no-writer",
+        dest="no_writer",
+        action="store_true",
+        default=True,
+        help="prosa deterministica (unico modo no Milestone 1)",
+    )
+    p_ask.set_defaults(func=cmd_ask)
+
     p_runs = sub.add_parser("runs", help="execucoes recentes")
     p_runs.add_argument("--limit", type=int, default=20)
+    p_runs.add_argument(
+        "--research",
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="MANIFEST_ID",
+        help="corridas de pesquisa; com um manifest_id, so aquela",
+    )
     p_runs.set_defaults(func=cmd_runs)
 
     return parser

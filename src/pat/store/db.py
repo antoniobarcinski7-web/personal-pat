@@ -153,6 +153,48 @@ CREATE TABLE IF NOT EXISTS gold_fact (
 -- Suporta o predicado central do AS OF: chave logica + corte por conhecimento.
 CREATE INDEX IF NOT EXISTS idx_gold_asof
     ON gold_fact (cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end, knowledge_date);
+
+-- ---------------------------------------------------------------------------
+-- RESEARCH_RUN: manifesto de uma execucao de pesquisa (Fase 3).
+--
+-- Tabela propria, e nao `ingest_run`: aquela e o manifesto de *ingestao*,
+-- escrito pelo Catalog. Dobrar os dois significados num tipo so trocaria
+-- clareza por economia de linha - a mesma razao pela qual o contrato
+-- `ResearchRunManifest` nao herda de `Run`.
+--
+-- Os campos de lista guardam a tupla do manifesto na ordem em que ela existe
+-- no contrato: `result_ids` segue a ordem dos passos, e ordem e significado.
+-- Uma tabela de juncao normalizaria a forma e perderia isso.
+--
+-- Append-only, como gold_fact. Um `manifest_id` ja gravado nunca e atualizado:
+-- reexecutar e uma corrida nova, e corrida antiga nao se reescreve.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS research_run (
+    manifest_id       VARCHAR PRIMARY KEY,
+    question_id       VARCHAR NOT NULL,
+    plan_id           VARCHAR NOT NULL,
+    capability_sha256 VARCHAR NOT NULL,
+
+    as_of             DATE NOT NULL,
+    executed_at       TIMESTAMPTZ NOT NULL,
+    outputs_available BOOLEAN NOT NULL,
+
+    result_ids        VARCHAR[] NOT NULL,
+    metric_versions   VARCHAR[] NOT NULL,
+    mapping_sha256s   VARCHAR[] NOT NULL,
+    fact_ids          VARCHAR[] NOT NULL,
+
+    pat_version       VARCHAR NOT NULL,
+    python_version    VARCHAR NOT NULL,
+    git_sha           VARCHAR
+);
+
+-- Procedencia de modelo (planner/writer) nao tem coluna aqui: no caminho
+-- deterministico ela e nula, e no Milestone 2 ela entra pela tabela `llm_call`,
+-- que referencia `manifest_id`. Uma corrida sem LLM nao carrega colunas de LLM.
+
+CREATE INDEX IF NOT EXISTS idx_research_run_plan
+    ON research_run (plan_id, executed_at);
 """
 
 

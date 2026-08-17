@@ -76,6 +76,24 @@ class EntityRef:
 
 
 @dataclass(frozen=True)
+class EntityCoverage:
+    """O que existe no gold para uma companhia, sem dizer quanto vale.
+
+    Serve a camada de pesquisa: ela precisa saber que periodos e escopos
+    poderiam ser consultados antes de montar um plano, e nao pode descobrir
+    isso emitindo SQL por fora.
+    """
+
+    entity_id: str
+    cod_cvm: int
+    denom_cia: str
+    period_ends: tuple[date, ...]
+    consolidated_scopes: tuple[bool, ...]
+    earliest_knowledge_date: date
+    latest_knowledge_date: date
+
+
+@dataclass(frozen=True)
 class Restatement:
     """Duas versoes conhecidas do mesmo periodo, com valores diferentes."""
 
@@ -336,6 +354,77 @@ class AsOf:
             [cod_cvm],
         ).fetchone()
         return EntityRef(*row) if row else None
+
+    def entities(self, *, as_of: date | None = None) -> list[EntityRef]:
+        """Companhias presentes no gold, em ordem estavel.
+
+        `as_of` nao e enfeite: a cobertura em 2024-06-30 e genuinamente
+        diferente da de hoje, e um catalogo que ignorasse isso deixaria alguem
+        planejar sobre um periodo que ainda nao era publico naquela data.
+        """
+        predicate = "WHERE knowledge_date <= ?" if as_of is not None else ""
+        params = [as_of] if as_of is not None else []
+        rows = self.conn.execute(
+            f"""
+            SELECT entity_id, max(cod_cvm), max(denom_cia)
+            FROM gold_fact
+            {predicate}
+            GROUP BY entity_id
+            ORDER BY entity_id
+            """,
+            params,
+        ).fetchall()
+        return [EntityRef(*row) for row in rows]
+
+    def coverage(self, entity_id: str, *, as_of: date | None = None) -> EntityCoverage | None:
+        """Periodos e escopos disponiveis para uma companhia. None se nao ha nada.
+
+        Diz que o periodo *existe*, nao que toda conta necessaria existe: um
+        periodo coberto ainda pode dar `MISSING_FACT_AS_OF` na resolucao de um
+        endereco. Conferir cada endereco aqui duplicaria o motor.
+        """
+        predicate = "AND knowledge_date <= ?" if as_of is not None else ""
+        params: list[object] = [entity_id]
+        if as_of is not None:
+            params.append(as_of)
+        row = self.conn.execute(
+            f"""
+            SELECT max(cod_cvm), max(denom_cia),
+                   min(knowledge_date), max(knowledge_date)
+            FROM gold_fact
+            WHERE entity_id = ? {predicate}
+            """,
+            params,
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+
+        periods = self.conn.execute(
+            f"""
+            SELECT DISTINCT period_end FROM gold_fact
+            WHERE entity_id = ? {predicate}
+            ORDER BY period_end
+            """,
+            params,
+        ).fetchall()
+        scopes = self.conn.execute(
+            f"""
+            SELECT DISTINCT consolidated FROM gold_fact
+            WHERE entity_id = ? {predicate}
+            ORDER BY consolidated
+            """,
+            params,
+        ).fetchall()
+
+        return EntityCoverage(
+            entity_id=entity_id,
+            cod_cvm=row[0],
+            denom_cia=row[1],
+            period_ends=tuple(p[0] for p in periods),
+            consolidated_scopes=tuple(s[0] for s in scopes),
+            earliest_knowledge_date=row[2],
+            latest_knowledge_date=row[3],
+        )
 
     def accounts(
         self,

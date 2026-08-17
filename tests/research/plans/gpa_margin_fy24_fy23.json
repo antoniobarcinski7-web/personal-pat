@@ -1,0 +1,69 @@
+{
+  "envelope_version": "v1",
+  "question": {
+    "question_version": "v1",
+    "text": "What was GPA's EBITDA margin in FY2024, and how did it compare with FY2023?",
+    "as_of": "2025-06-30",
+    "asked_at": "2025-07-01T12:00:00Z",
+    "pinned_entities": [],
+    "pinned_periods": [],
+    "pinned_scope": null,
+    "requested_output": "comparison",
+    "constraints": {
+      "min_source_tier": "primary_official",
+      "max_fidelity": "approximate",
+      "allow_unconfirmed_mapping": false,
+      "allow_failed_checks": true
+    }
+  },
+  "plan": {
+    "plan_version": "v1",
+    "question_id": "f8b17b30dc006a41541c3c3732c1976d470ad456f3a5e289c002c077846f9e49",
+    "objective": "comparar a margem EBITDA consolidada do GPA entre FY2024 e FY2023",
+    "as_of": "2025-06-30",
+    "scope": "consolidated",
+    "steps": [
+      {
+        "step_kind": "metric",
+        "step_id": "margin_fy2023",
+        "metric": {
+          "name": "margem_ebitda",
+          "version": "v1"
+        },
+        "entity_id": "br:cnpj:47508411000156",
+        "period_end": "2023-12-31"
+      },
+      {
+        "step_kind": "metric",
+        "step_id": "margin_fy2024",
+        "metric": {
+          "name": "margem_ebitda",
+          "version": "v1"
+        },
+        "entity_id": "br:cnpj:47508411000156",
+        "period_end": "2024-12-31"
+      },
+      {
+        "step_kind": "derivation",
+        "step_id": "change",
+        "op": "delta",
+        "inputs": [
+          "margin_fy2023",
+          "margin_fy2024"
+        ],
+        "params": {
+          "years": null
+        }
+      }
+    ],
+    "outputs": [
+      "margin_fy2023",
+      "margin_fy2024",
+      "change"
+    ],
+    "assumptions": [
+      "\"FY\" lido como exercicio social encerrado em 31 de dezembro"
+    ],
+    "unresolved": []
+  }
+}

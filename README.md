@@ -6,10 +6,12 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 2.** Espinha dorsal de dados (bronze → silver → gold,
-consulta `AS OF`) mais a camada semântica: conceitos financeiros universais,
-mapeamentos por regime contábil e métricas canônicas versionadas. Não há agente
-ainda — isso é deliberado (ver "Fases").
+**Estado atual: Fase 3, Milestone 1.** Espinha dorsal de dados (bronze → silver
+→ gold, consulta `AS OF`), camada semântica (conceitos universais, mapeamentos
+por regime, métricas versionadas) e o núcleo determinístico da camada de
+pesquisa: plano declarativo → validação → resolução → execução → renderização →
+resposta com citações, tudo auditável e sem uma linha de código de LLM. O
+planejador e o escritor entram nos Milestones 2 e 3.
 
 ---
 
@@ -41,18 +43,29 @@ Bronze imutável (reprocessar nunca depende de re-baixar), dependências travada
 
 ```
 L5  INTERFACE     CLI · relatório versionado
-L4  AGENTE        planner → retriever → coder → charter → writer → critic
-                  ↑ só emite CÓDIGO e TEXTO, nunca números
-L3  EXECUÇÃO      sandbox determinístico, DuckDB read-only
+L4  LINGUAGEM     planner → (plano) · writer → (prosa com tokens)
+                  ↑ só emite PLANO e TEXTO, nunca números
+L3  PESQUISA      plano → validador → resolver → executor → renderer → resposta
+                  determinístico, DuckDB read-only, sem código gerado
 L2  SEMÂNTICA     conceito universal → endereço de taxonomia → métrica versionada
 L1  DADOS         bronze (raw imutável) → prata (tipado) → ouro (point-in-time)
 L0  FONTES        CVM · B3 · BCB · IBGE · RI · (vendor licenciado, futuro)
 ```
 
+O caminho completo de uma pergunta:
+
+```
+Question → Planner → ResearchPlan → Validator → Resolver → Executor → Renderer → Writer → Answer
+             (LLM)                                                                  (LLM)
+```
+
 Duas fronteiras são inegociáveis:
 
-- **L4 nunca toca dados diretamente.** Escreve código executado em sandbox contra
-  DuckDB montado read-only. Não existe caminho pelo qual um LLM escreva no storage.
+- **L4 nunca toca dados diretamente.** O planejador recebe um *capability
+  snapshot* — o que existe, nunca quanto vale — e devolve um plano declarativo.
+  O escritor recebe tokens (`{{s:margin_fy2024}}`) e seus rótulos, nunca os
+  valores. Não existe caminho pelo qual um LLM escreva no storage, leia um fato
+  ou copie um número que não lhe foi mostrado.
 - **L0 nunca interpreta.** Providers baixam bytes e registram procedência; parsing é
   L1. É o que permite reprocessar anos de documentos com um parser corrigido, sem
   re-baixar e sem depender de o servidor externo responder hoje o que respondeu ontem.
@@ -245,12 +258,62 @@ Se as duas consultas `asof` acima devolvem valores diferentes, houve
 reapresentação — e os dois números continuam consultáveis, cada um pela data em
 que era verdade. É esse o critério de conclusão da Fase 1.
 
+### Pesquisa (L3) — o caminho determinístico
+
+Milestone 1 da Fase 3: o pipeline inteiro roda **sem LLM**. Um plano declarativo
+em JSON substitui o planejador enquanto ele não existe, o que também é a forma de
+provar que o resto não depende dele.
+
+```bash
+pat capability              # o que o sistema sabe executar, e o hash disso
+pat capability --json       # os bytes canônicos, como o planejador os verá
+
+pat ask --plan-file tests/research/plans/gpa_margin_fy24_fy23.json --dry-run
+pat ask --plan-file tests/research/plans/gpa_margin_fy24_fy23.json
+
+pat runs --research                  # corridas de pesquisa registradas
+pat runs --research <manifest_id>    # uma corrida específica
+```
+
+O `capability snapshot` diz **o que existe** — conceitos, métricas, mapeamentos,
+empresas, períodos cobertos, derivações disponíveis — e nunca **quanto vale**:
+não há um único `Decimal` nele, e há teste que falha se aparecer. É a única coisa
+que o planejador verá quando existir.
+
+`ask` valida o plano antes de executá-lo, e o executor só aceita plano
+certificado — não há caminho que aceite um `ResearchPlan` cru. Toda saída
+carrega citação por token, e cada citação resolve até o `fact_id` e o byte no
+bronze:
+
+```
+RESPOSTA
+  FY2023: 10.09%; FY2024: 3.89%; variacao: -6.20%.
+
+CITACOES
+  {{s:margin_fy2023}}   10.09%   67d834df61b6
+    margem_ebitda@v1, consolidado, exercicio findo em 2023-12-31, AS OF 2025-06-30
+```
+
+Cada execução grava um manifesto em `research_run`: plano, pergunta, hash do
+capability, métricas, mapeamentos, fatos-folha, versão do `pat` e `git_sha`.
+Uma corrida cujo resultado não pôde ser calculado **também** é registrada — a
+auditoria de por que não houve resposta vale tanto quanto a de por que houve.
+
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede) — 243 testes
+uv run pytest              # suite padrão (sem rede) — 406 testes
+uv run pytest tests/research  # só a camada de pesquisa — 163
 uv run pytest -m network   # contra a CVM real — 11 testes
 ```
+
+Se `pat` falhar com `ModuleNotFoundError: No module named 'pat'` logo depois de
+um `uv sync` que terminou sem erro, cheque `stat -f '%Sf' .venv/lib/python*/site-packages/*.pth`:
+o CPython 3.13+ **ignora `.pth` marcado como oculto** (um arquivo escondido não
+deve injetar `sys.path` em silêncio), e basta um `chflags -R hidden .venv` feito
+por qualquer utilitário para o editable install parar de valer. `chflags -R
+nohidden .venv` resolve. Os testes não pegam isso porque o pytest injeta
+`pythonpath = ["src"]` por conta própria.
 
 `uv lock --check` verifica que o lockfile ainda reflete o `pyproject.toml`.
 Nunca instale com dependências resolvidas na hora: `--locked` é o que mantém I3.
@@ -268,7 +331,10 @@ src/pat/
 │   ├── lineage.py     Lineage, Run
 │   ├── silver.py      AccountLine — uma linha de CSV da CVM, tipada
 │   ├── facts.py       Fact bitemporal
-│   └── semantics.py   Concept, LineAddress, ConceptBinding, Mapping, MetricResult
+│   ├── semantics.py   Concept, LineAddress, ConceptBinding, Mapping, MetricResult
+│   └── research.py    ResearchPlan, PlanStep, ComputationResult, Claim, manifesto
+│                      ← nenhum passo de plano aceita Decimal: número literal é
+│                        inexprimível na gramática, não apenas proibido
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
@@ -280,6 +346,7 @@ src/pat/
 │   ├── catalog.py     runs, documentos, retrievals, detecção de mudança
 │   ├── silver.py      persiste AccountLine; idempotente por silver_id
 │   ├── gold.py        escala, tipo de período, validação → Fact. Append-only.
+│   ├── research.py    persiste o manifesto de pesquisa. Quem calcula não grava.
 │   └── db.py          conexão e esquema
 ├── semantics/       L2 — conceitos universais, mapeamentos por regime, métricas
 │   ├── concepts.py    catálogo universal; não menciona plano de contas
@@ -291,6 +358,16 @@ src/pat/
 │   ├── resolver.py    Protocol FactResolver — a fronteira com a fonte
 │   ├── check.py       os bindings ainda resolvem na origem?
 │   └── frameworks/cvm_dfp/   único lugar que conhece cd_conta e cod_cvm
+├── research/        L3 — plano declarativo → resultado auditável. Sem LLM ainda.
+│   ├── canonical.py   JSON canônico + sha256: uma identidade, uma implementação
+│   ├── capability.py  o que o sistema sabe fazer; jamais um valor financeiro
+│   ├── validate.py    validação pura: sem banco, sem relógio, sem rede
+│   ├── resolve.py     o que só o warehouse sabe responder
+│   ├── derive.py      as 7 derivações fechadas e suas condições de recusa
+│   ├── execute.py     único módulo que segura um Engine; só aceita plano certificado
+│   ├── render.py      único lugar que formata número para exibição
+│   ├── answer.py      montagem de claims, substituição de token, regra do dígito
+│   └── manifest.py    o que foi executado, com que versões e sob que hashes
 ├── query/asof.py    única porta de leitura do gold; toda consulta exige AS OF
 ├── audit/run.py     manifesto de execução (versão, git sha, timestamps)
 ├── ingest.py        orquestração: resolve → fetch → put → record
@@ -315,10 +392,18 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **0** | contratos, bronze, provider CVM, catálogo | todo byte rastreável à origem | ✅ |
 | **1** | silver + gold bitemporal + `query AS OF` | consulta prova diferença antes/depois de uma reapresentação | ✅ |
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
-| **3** | sandbox + coder + charter | pergunta → código → número correto, sem LLM fazendo conta | |
-| **4** | planner, writer, critic, pipeline | relatório com toda afirmação citando `fact_id` | |
+| **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ◑ |
+| **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | |
 | **5** | B3 (preços, proventos), BCB, IBGE | | |
 | **6** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
+
+A Fase 3 abandonou o desenho original de *sandbox + coder*: sem código gerado,
+não há sandbox a proteger. O modelo escolhe **o que** perguntar, dentro de uma
+gramática fechada onde um número literal é inexprimível; o cálculo continua sendo
+o motor da Fase 2. É uma superfície de ataque menor e uma garantia mais forte —
+não "o LLM foi instruído a não calcular", e sim "não há onde ele escreveria um
+número". O Milestone 1 (núcleo determinístico) está fechado; planner e writer são
+os Milestones 2 e 3, detalhados em `docs/phase3_proposal.md`.
 
 **Fases 0–2 antes de qualquer linha de agente.** Um agente sobre dados não confiáveis
 produz erros eloquentes e confiantes — o pior resultado possível para research.

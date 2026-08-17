@@ -1,0 +1,181 @@
+"""A regra de camada da Fase 3, verificada por AST.
+
+Mesma tecnica de `tests/semantics/test_layering.py`, e pela mesma razao: um
+import morto dentro de uma funcao continua sendo acoplamento, e o dia em que
+alguem ler o warehouse de dentro do planejador "so para conferir" os testes de
+valor continuariam passando.
+
+As regras que importam sao as de conjunto EXATO, nao as de lista negra: um
+arquivo novo que atravesse a fronteira aparece, e uma lista negra nunca
+pegaria isso.
+"""
+
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+SRC = Path(__file__).resolve().parents[2] / "src"
+RESEARCH = SRC / "pat" / "research"
+SEMANTICS = SRC / "pat" / "semantics"
+
+
+def _collect(nodes) -> set[str]:
+    found: set[str] = set()
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            found.add(node.module)
+    return found
+
+
+def _imports(path: Path) -> set[str]:
+    return _collect(ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path))))
+
+
+def _files_importing(root: Path, prefixes: tuple[str, ...]) -> set[str]:
+    return {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if any(i.startswith(prefixes) for i in _imports(path))
+    }
+
+
+# -- R1: contratos continuam universais --------------------------------------
+
+
+def test_contratos_de_pesquisa_nao_conhecem_implementacao():
+    proibidos = ("pat.semantics", "pat.query", "pat.store", "pat.research", "pat.parse", "httpx")
+    for imported in _imports(SRC / "pat" / "contracts" / "research.py"):
+        assert not imported.startswith(proibidos), (
+            f"contracts/research.py importa {imported}. Contrato depende so de "
+            "contrato - e o que mantem a gramatica de plano conferivel sem banco."
+        )
+
+
+def test_a_gramatica_de_plano_nao_tem_onde_por_um_numero():
+    """A propriedade estrutural da Fase 3, conferida no texto do contrato.
+
+    Se um `Decimal` aparecer num passo de plano, um planejador passa a poder
+    escrever um valor literal - e a resposta ganha um numero que nao veio do
+    motor. O diff que fizer isso tem que quebrar aqui.
+    """
+    fonte = (SRC / "pat" / "contracts" / "research.py").read_text(encoding="utf-8")
+    arvore = ast.parse(fonte)
+
+    for node in ast.walk(arvore):
+        if not isinstance(node, ast.ClassDef) or node.name not in ("MetricStep", "DerivationStep"):
+            continue
+        for campo in node.body:
+            if isinstance(campo, ast.AnnAssign):
+                anotacao = ast.unparse(campo.annotation)
+                assert "Decimal" not in anotacao, (
+                    f"{node.name}.{ast.unparse(campo.target)} aceita Decimal: a gramatica "
+                    "passou a permitir numero literal no plano"
+                )
+
+
+# -- R2: a Fase 2 nao sabe que a Fase 3 existe -------------------------------
+
+
+def test_semantics_nao_importa_research():
+    atravessam = _files_importing(SEMANTICS, ("pat.research",))
+    assert atravessam == set(), (
+        f"{sorted(atravessam)} importam pat.research. A camada semantica tem que "
+        "continuar utilizavel sem a camada de pesquisa."
+    )
+
+
+# -- R4/R5: um dono para o Engine, um para o AsOf ----------------------------
+
+
+def _files_containing(root: Path, needle: str) -> set[str]:
+    return {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if needle in path.read_text(encoding="utf-8")
+    }
+
+
+def test_so_a_raiz_de_composicao_constroi_o_motor():
+    """Quem escolhe a fonte concreta e um lugar so."""
+    assert _files_containing(RESEARCH, "build_engine") == {"__init__.py"}
+
+
+def test_so_o_executor_chama_o_motor():
+    """O motor chega ao executor por injecao - ele nem importa `pat.semantics.engine`.
+
+    Isso e mais forte do que a regra pedia: o executor nao consegue construir
+    um motor, so usar o que lhe deram.
+    """
+    assert _files_containing(RESEARCH, "engine.compute") == {"execute.py"}
+    assert _files_importing(RESEARCH, ("pat.semantics.engine",)) == set()
+
+
+def test_so_resolve_capability_e_a_raiz_tocam_a_camada_de_consulta():
+    atravessam = _files_importing(RESEARCH, ("pat.query",))
+    assert atravessam == {"resolve.py", "capability.py"}
+
+
+# -- R6: o validador e puro ---------------------------------------------------
+
+
+def test_o_validador_nao_toca_banco_relogio_nem_rede():
+    proibidos = ("pat.query", "pat.store", "pat.research.llm", "httpx", "random", "socket")
+    imports = _imports(RESEARCH / "validate.py")
+    for imported in imports:
+        assert not imported.startswith(proibidos), f"validate.py importa {imported}"
+
+    fonte = (RESEARCH / "validate.py").read_text(encoding="utf-8")
+    assert "datetime.now" not in fonte and "date.today" not in fonte, (
+        "validacao que le o relogio nao e reproduzivel"
+    )
+
+
+def test_a_derivacao_e_pura():
+    proibidos = ("pat.query", "pat.store", "pat.semantics.engine", "httpx")
+    for imported in _imports(RESEARCH / "derive.py"):
+        assert not imported.startswith(proibidos), f"derive.py importa {imported}"
+
+
+# -- R7/R8: sem rede, e um so formatador -------------------------------------
+
+
+def test_nenhum_modulo_de_pesquisa_faz_rede_no_milestone_1():
+    """Milestone 1 nao tem cliente de LLM nem qualquer outra saida de rede."""
+    atravessam = _files_importing(RESEARCH, ("httpx", "urllib", "socket", "requests"))
+    assert atravessam == set(), f"{sorted(atravessam)} abrem rede na Fase 3 Milestone 1"
+
+
+def test_nao_existe_execucao_de_codigo_arbitrario():
+    """Sem sandbox porque sem codigo gerado - e isso e conferivel."""
+    proibidos = ("subprocess", "os.system", "eval(", "exec(")
+    for path in RESEARCH.rglob("*.py"):
+        fonte = path.read_text(encoding="utf-8")
+        for termo in proibidos:
+            assert termo not in fonte, f"{path.name} contem {termo!r}"
+
+
+def test_so_o_renderer_formata_numero_para_apresentacao():
+    formatadores = {
+        path.relative_to(RESEARCH).as_posix()
+        for path in RESEARCH.rglob("*.py")
+        if "quantize(" in path.read_text(encoding="utf-8")
+    }
+    assert formatadores == {"render.py"}, (
+        f"{sorted(formatadores)} formatam numero. Um lugar so e o que torna a regra "
+        "do digito verificavel."
+    )
+
+
+# -- o Milestone 1 nao adiantou o Milestone 2 --------------------------------
+
+
+@pytest.mark.parametrize("modulo", ["llm", "planner.py", "writer.py"])
+def test_o_milestone_2_nao_foi_comecado(modulo):
+    assert not (RESEARCH / modulo).exists(), (
+        f"{modulo} pertence ao Milestone 2 e nao deveria existir ainda"
+    )
