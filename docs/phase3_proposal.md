@@ -935,13 +935,31 @@ Um desvio em relação ao plano do passo 7: a persistência do manifesto não es
 | **D-3** | LLM byte storage | `data/llm/` · bronze · DuckDB blob · hashes only | **`data/llm/`** (§14) | Preserves bronze's meaning | **YES — blocks step 9** |
 | **D-4** | `result_id` scheme | content-addressed vs `sha256(plan_id\|step_id)` | **Content-addressed** — different numbers get different ids, which is informative | Determinism test shape | **YES — blocks step 6** |
 | **D-5** | Delta precision | (a) assert from full-precision results; (b) pin a literal | **(a)** — (b) would be inventing a value | Golden assertion | **YES — blocks step 7** |
-| **D-6** | Anthropic SDK vs httpx | add `anthropic` dep · use existing `httpx` | **httpx** — zero new dependency, ~80 lines, consistent with "dependências mínimas". Revisit if streaming or tool use is ever needed | `pyproject.toml`, `uv.lock` | **YES — blocks step 9** |
+| **D-6** | Anthropic SDK vs httpx | add `anthropic` dep · use existing `httpx` | ~~httpx~~ → **DECIDIDO: SDK `anthropic`.** A recomendação original era httpx, por "dependências mínimas". Revertida antes do M2.3: o parsing da resposta e o mapeamento de erro deixam de ser ~80 linhas a manter contra mudanças da API. O preço é uma dependência nova e uma armadilha nomeada — o SDK liga retry por default (`max_retries=2`), e retry é um segundo caminho de influência que teria que ser hasheado e manifestado por conta própria; o adapter **tem** que passar `max_retries=0` | `pyproject.toml`, `uv.lock` | **resolvido** |
 | **D-7** | Where the prompt text lives | module constant in `planner.py` vs a `.txt` file | **Module constant** — versioned with the parser of its output, hash trivially derivable | Provenance simplicity | no — defaults to constant |
 | **D-8** | Series completeness policy | all-or-nothing per output vs per-period unavailability rendered | **Per-period, explicitly rendered**; an output whose own step failed still blocks the answer | Executor semantics | no — decidable at step 6 |
 | **D-9** | Does `ask` require `--cod-cvm`? | required · optional (planner resolves from the snapshot) | **Optional.** Making it required would prove nothing about planning; the pin remains available and authoritative | CLI ergonomics | no |
 | **D-10** | Default `max_fidelity` | `EXACT` vs `APPROXIMATE` | **`APPROXIMATE`** — `EXACT` would refuse every company on the default family, which is most of them; the warning carries the caveat | Refusal rate | no |
 | **D-11** | Should `pat ask` write a manifest row on failure? | yes · no | **Yes** — a refused run is a run, and its provenance is the audit trail of a refusal | `research_run` semantics | no |
 | **D-12** | Answer language | Portuguese vs English prose | **Match the question's language**; the repo convention (English identifiers, Portuguese prose) governs code, not output | Writer prompt | no |
+
+## Milestone 2.3 decisions — all resolved
+
+Numbered `M-N` and not `D-N` on purpose: these came out of the pre-2.3 audit,
+after the table above was written, and reusing `D-` numbers would collide with
+rows that mean something else entirely.
+
+| # | Decision | Resolution | Why it is not arbitrary |
+|---|---|---|---|
+| **M-1** | Where `called_at` is stamped | **In `LLMResponse`**, set by whoever produced the response | A cache hit must carry the instant of the *original* call. Stamping "now" on a reply served from disk would make the manifest state something that did not happen — and it would look right |
+| **M-2** | Where `CachedCall` lives | **`research/llm/store.py`** | Same file as the byte store (D-3); the cache and its storage share a boundary, and neither may import `pat.store` |
+| **M-3** | `llm_call.manifest_id` | **Nullable** | A rejected plan produces a real call and no manifest. A non-null column would force either a fake manifest id or dropping the call record — both lose the audit trail of a refusal, which D-11 says to keep |
+| **M-4** | API key environment variable | **`ANTHROPIC_API_KEY`** | The vendor's own convention. A `PAT_`-prefixed name would buy nothing and surprise anyone who already has the standard one exported. Read in the adapter, never in `planner.py` — the layering test forbids `getenv` there |
+
+Already applied in code (commit `ecd9642`), listed here so the table is not the
+only record: `temperature` optional, `client_fingerprint` in `PlanProvenance`
+and on `LLMClient`, `max_tokens` default 16384, `PlannerFailure.TRUNCATED_RESPONSE`,
+and `call_sha256` as the cache key (§14).
 
 ---
 
