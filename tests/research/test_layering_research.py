@@ -144,10 +144,43 @@ def test_a_derivacao_e_pura():
 # -- R7/R8: sem rede, e um so formatador -------------------------------------
 
 
-def test_nenhum_modulo_de_pesquisa_faz_rede_no_milestone_1():
-    """Milestone 1 nao tem cliente de LLM nem qualquer outra saida de rede."""
-    atravessam = _files_importing(RESEARCH, ("httpx", "urllib", "socket", "requests"))
-    assert atravessam == set(), f"{sorted(atravessam)} abrem rede na Fase 3 Milestone 1"
+def test_a_rede_entra_por_um_arquivo_so():
+    """Guard ESTREITADO no M2.3: ate aqui a camada de pesquisa nao tinha
+    nenhuma saida de rede, e o teste exigia conjunto vazio. O adapter e a
+    primeira - e continua sendo conjunto EXATO, entao um segundo arquivo com
+    saida de rede aparece aqui em vez de passar despercebido.
+
+    `anthropic` entra na lista junto com os clientes HTTP crus: e por ele que a
+    rede sai, e um guard que so olhasse `httpx` nao veria nada.
+    """
+    atravessam = _files_importing(
+        RESEARCH, ("httpx", "urllib", "socket", "requests", "anthropic")
+    )
+    assert atravessam == {"llm/anthropic.py"}, (
+        f"{sorted(atravessam)}: a saida de rede da camada de pesquisa tem que "
+        "caber num arquivo so"
+    )
+
+
+def test_so_o_adapter_le_o_ambiente():
+    """Chave de API entra por um lugar. `config.py` continua sendo o unico
+    lugar do resto do projeto que le `os.environ`."""
+    lendo = {
+        path.relative_to(RESEARCH).as_posix()
+        for path in RESEARCH.rglob("*.py")
+        if "os.environ" in path.read_text(encoding="utf-8")
+        or "getenv" in path.read_text(encoding="utf-8")
+    }
+    assert lendo == {"llm/anthropic.py"}
+
+
+def test_o_adapter_desliga_a_retentativa_do_sdk():
+    """O SDK tenta duas vezes por default, e uma segunda tentativa e um segundo
+    caminho de influencia: teria que ser hasheada e manifestada por conta
+    propria. Conferido no texto porque um default some numa leitura distraida.
+    """
+    fonte = (RESEARCH / "llm" / "anthropic.py").read_text(encoding="utf-8")
+    assert "max_retries=0" in fonte
 
 
 def test_nao_existe_execucao_de_codigo_arbitrario():
@@ -234,15 +267,22 @@ def test_o_planejador_nao_executa_nem_valida():
         assert proibido not in fonte, f"planner.py chama {proibido}"
 
 
-def test_a_porta_de_llm_ainda_nao_tem_adapter_concreto():
-    """O M2.3 criou cache e persistencia; adapter concreto ainda nao existe.
+def test_existe_exatamente_um_adapter_concreto():
+    """Guard ESTREITADO a cada milestone, nunca removido nem afrouxado.
 
-    Guard ESTREITADO, nao removido: continua sendo conjunto exato, entao
-    `openai.py` aparece aqui no dia em que alguem o criar. Uma lista negra
-    deixaria passar.
+    Historia: ate o M2.1 exigia que `llm/` nao existisse; o M2.3 admitiu cache
+    e persistencia; agora admite um adapter. Continua sendo conjunto EXATO -
+    `openai.py` aparece aqui no dia em que alguem o criar, e a decisao de ter
+    um segundo provider passa a ser explicita em vez de silenciosa. Uma lista
+    negra nunca pegaria isso.
     """
     llm = RESEARCH / "llm"
-    assert {p.name for p in llm.glob("*.py")} == {"__init__.py", "cache.py", "store.py"}
+    assert {p.name for p in llm.glob("*.py")} == {
+        "__init__.py",
+        "anthropic.py",
+        "cache.py",
+        "store.py",
+    }
 
 
 def test_o_cache_nao_alcanca_dado_nem_persistencia_do_warehouse():
