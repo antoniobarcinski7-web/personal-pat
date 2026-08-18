@@ -44,12 +44,13 @@ conta propria, ou a procedencia passa a sub-relatar o que aconteceu.
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Protocol, runtime_checkable
 
 from pydantic import Field, field_validator
 
-from pat.contracts.common import Frozen, Sha256
+from pat.contracts.common import AwareDatetime, Frozen, Sha256
 from pat.research.canonical import sha256_of
 
 __all__ = [
@@ -206,6 +207,16 @@ class LLMResponse(Frozen):
     stop_reason: str = Field(min_length=1)
     prompt_sha256: Sha256
     response_sha256: Sha256
+    called_at: AwareDatetime
+    """Instante da chamada que *produziu* este texto - nunca o instante em que
+    ele foi servido.
+
+    Mora aqui, e nao no planejador, porque so quem produziu a resposta sabe
+    quando ela foi feita. Uma resposta vinda do cache carrega o `called_at`
+    original: carimbar "agora" numa resposta gravada semana passada faria o
+    manifesto afirmar uma chamada que nao aconteceu, e afirmar isso com a
+    aparencia de rastro. Quem quiser saber quando o cache serviu tem a coluna
+    propria em `llm_call`; `called_at` responde outra pergunta."""
     cached: bool = False
 
     def model_post_init(self, __context: object) -> None:
@@ -224,17 +235,24 @@ class LLMResponse(Frozen):
         model_id: str,
         prompt_sha256: str,
         stop_reason: str = "end_turn",
+        called_at: datetime | None = None,
         cached: bool = False,
     ) -> "LLMResponse":
         """Construtor que calcula o hash do texto. Caminho normal de quem
         implementa um cliente - deixa o hash errado ser impossivel, e nao
-        apenas detectavel."""
+        apenas detectavel.
+
+        `called_at` cai para "agora" porque quem chama este construtor acabou
+        de fazer a chamada. Quem serve do cache nao passa por aqui: reconstroi
+        a resposta com o instante gravado, que e o ponto do M-1.
+        """
         return cls(
             text=text,
             model_id=model_id,
             stop_reason=stop_reason,
             prompt_sha256=prompt_sha256,
             response_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            called_at=called_at or datetime.now(UTC),
             cached=cached,
         )
 
@@ -294,11 +312,13 @@ class FakeLLMClient:
         model_id: str | None = None,
         stop_reason: str = "end_turn",
         fingerprint: str = "fake/v1/00000000",
+        called_at: datetime | None = None,
     ) -> None:
         self._responses: dict[str, str] = dict(responses or {})
         self._model_id = model_id
         self._stop_reason = stop_reason
         self._fingerprint = fingerprint
+        self._called_at = called_at
         self._calls: list[LLMRequest] = []
 
     @property
@@ -339,4 +359,5 @@ class FakeLLMClient:
             model_id=self._model_id or request.model,
             prompt_sha256=request.prompt_sha256,
             stop_reason=self._stop_reason,
+            called_at=self._called_at,  # fixavel: teste nao depende do relogio
         )

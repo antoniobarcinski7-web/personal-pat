@@ -234,14 +234,55 @@ def test_o_planejador_nao_executa_nem_valida():
         assert proibido not in fonte, f"planner.py chama {proibido}"
 
 
-def test_a_porta_de_llm_ainda_nao_tem_adapter_nem_cache():
-    """O M2.1 e so contrato. Adapter concreto e cache sao 2.2 e 2.3.
+def test_a_porta_de_llm_ainda_nao_tem_adapter_concreto():
+    """O M2.3 criou cache e persistencia; adapter concreto ainda nao existe.
 
-    Checa o conjunto EXATO de arquivos: uma lista negra deixaria passar
-    `openai.py` no dia em que alguem o criasse.
+    Guard ESTREITADO, nao removido: continua sendo conjunto exato, entao
+    `openai.py` aparece aqui no dia em que alguem o criar. Uma lista negra
+    deixaria passar.
     """
     llm = RESEARCH / "llm"
-    assert {p.name for p in llm.glob("*.py")} == {"__init__.py"}
+    assert {p.name for p in llm.glob("*.py")} == {"__init__.py", "cache.py", "store.py"}
+
+
+def test_o_cache_nao_alcanca_dado_nem_persistencia_do_warehouse():
+    """O cache fala com o armazenamento por Protocol, do mesmo jeito que a
+    camada semantica fala com os dados por `FactResolver`. Um import de
+    `pat.store` aqui daria ao modelo um caminho ate o warehouse."""
+    proibidos = (
+        "pat.store",
+        "pat.sources",
+        "pat.parse",
+        "pat.query",
+        "pat.semantics",
+        "pat.build",
+        "pat.ingest",
+        "duckdb",
+        "httpx",
+        "urllib",
+        "socket",
+        "requests",
+    )
+    for modulo in ("cache.py", "store.py"):
+        for imported in _imports(RESEARCH / "llm" / modulo):
+            assert not imported.startswith(proibidos), (
+                f"llm/{modulo} importa {imported}: o cache ganhou caminho ate "
+                "dado, warehouse ou rede"
+            )
+
+
+def test_o_cache_e_a_persistencia_nao_conhecem_provider_nenhum():
+    for modulo in ("cache.py", "store.py"):
+        codigo = _codigo_sem_texto(RESEARCH / "llm" / modulo)
+        for provider in ("anthropic", "openai", "bedrock", "vertex", "api_key", "getenv"):
+            assert provider not in codigo, f"llm/{modulo} menciona {provider!r}"
+
+
+def test_so_o_cache_decide_a_identidade_da_chamada():
+    """`call_sha256` num lugar so. Duas implementacoes de identidade divergem
+    em silencio - foi o argumento que fez `LLMRequest` ser Pydantic e nao
+    dataclass, e vale igual aqui."""
+    assert _files_containing(RESEARCH, "def call_sha256") == {"llm/cache.py"}
 
 
 def _codigo_sem_texto(path: Path) -> str:

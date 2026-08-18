@@ -129,6 +129,7 @@ PLANO_VALIDO = {
 
 def _fake(question, snapshot, resposta, **kwargs) -> FakeLLMClient:
     """Duplo ja preparado para responder a requisicao que o planejador fara."""
+    kwargs.setdefault("called_at", CHAMADO_EM)
     fake = FakeLLMClient(**kwargs)
     texto = resposta if isinstance(resposta, str) else json.dumps(resposta)
     fake.register(build_request(question, snapshot, model=MODELO), texto)
@@ -138,7 +139,7 @@ def _fake(question, snapshot, resposta, **kwargs) -> FakeLLMClient:
 def _planeja(question, snapshot, resposta, **kwargs):
     fake = _fake(question, snapshot, resposta, **kwargs)
     outcome = plan_question(
-        question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM
+        question, snapshot, llm=fake, model=MODELO
     )
     return outcome, fake
 
@@ -193,7 +194,7 @@ def test_uma_pergunta_e_exatamente_uma_chamada(question, snapshot):
     'o modelo foi chamado uma vez' e conferivel."""
     fake = _fake(question, snapshot, PLANO_VALIDO)
 
-    plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+    plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert len(fake.calls) == 1
 
@@ -218,7 +219,7 @@ def test_o_override_de_temperatura_e_pedido_explicito_e_continua_decimal(
     configuracao de geracao e o adapter. Mas quem pedir continua obrigado a
     `Decimal`, e o pedido aparece na procedencia: valor nao-nulo ali significa
     que foi pedido *e* aplicado."""
-    fake = FakeLLMClient()
+    fake = FakeLLMClient(called_at=CHAMADO_EM)
     pedido = build_request(question, snapshot, model=MODELO, temperature=Decimal("0.7"))
     fake.register(pedido, json.dumps(PLANO_VALIDO))
 
@@ -228,7 +229,6 @@ def test_o_override_de_temperatura_e_pedido_explicito_e_continua_decimal(
         llm=fake,
         model=MODELO,
         temperature=Decimal("0.7"),
-        called_at=CHAMADO_EM,
     )
 
     assert isinstance(fake.calls[0].temperature, Decimal)
@@ -243,7 +243,7 @@ def test_a_procedencia_registra_a_configuracao_de_geracao_do_cliente(
     porque nome de mecanismo de fornecedor nao entra em contrato universal."""
     fake = _fake(question, snapshot, PLANO_VALIDO, fingerprint="fake/v9/deadbeef")
     outcome = plan_question(
-        question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM
+        question, snapshot, llm=fake, model=MODELO
     )
 
     assert outcome.provenance.temperature is None
@@ -258,7 +258,7 @@ def test_resposta_truncada_falha_com_nome_proprio(question, snapshot):
     fake = _fake(question, snapshot, cortado, stop_reason="max_tokens")
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.TRUNCATED_RESPONSE
     assert "max_tokens" in str(erro.value)
@@ -335,7 +335,7 @@ def test_json_malformado_falha_explicitamente(question, snapshot):
     _, fake = None, _fake(question, snapshot, "isto nao e json {")
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.MALFORMED_JSON
     assert len(erro.value.response_sha256) == 64
@@ -345,7 +345,7 @@ def test_resposta_que_nao_e_objeto_falha(question, snapshot):
     fake = _fake(question, snapshot, json.dumps(["um", "array"]))
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.NOT_AN_OBJECT
 
@@ -357,7 +357,7 @@ def test_plano_fora_da_gramatica_falha_no_contrato(question, snapshot):
     fake = _fake(question, snapshot, quebrado)
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.CONTRACT_VIOLATION
     assert erro.value.detail
@@ -369,7 +369,7 @@ def test_uma_falha_de_parsing_nao_gera_segunda_chamada(question, snapshot):
     fake = _fake(question, snapshot, "{")
 
     with pytest.raises(PlannerError):
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert len(fake.calls) == 1
 
@@ -381,7 +381,7 @@ def test_o_planejador_nao_conserta_resposta_com_cerca_de_markdown(question, snap
     fake = _fake(question, snapshot, cercado)
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.MALFORMED_JSON
 
@@ -391,7 +391,7 @@ def test_o_modelo_nao_pode_declarar_a_identidade_da_pergunta(question, snapshot)
     fake = _fake(question, snapshot, {**PLANO_VALIDO, "question_id": "a" * 64})
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.QUESTION_ID_EMITTED
 
@@ -410,7 +410,7 @@ def test_numero_literal_num_passo_nao_tem_onde_entrar(question, snapshot):
     fake = _fake(question, snapshot, com_valor)
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.CONTRACT_VIOLATION
 
@@ -419,7 +419,7 @@ def test_campo_extra_no_plano_e_recusado(question, snapshot):
     fake = _fake(question, snapshot, {**PLANO_VALIDO, "confidence": "alta"})
 
     with pytest.raises(PlannerError) as erro:
-        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+        plan_question(question, snapshot, llm=fake, model=MODELO)
 
     assert erro.value.failure is PlannerFailure.CONTRACT_VIOLATION
 
@@ -490,7 +490,7 @@ def test_o_planejador_roda_sem_banco_sem_disco_e_sem_ambiente(question, snapshot
     fake = _fake(question, snapshot, PLANO_VALIDO)
 
     outcome = plan_question(
-        question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM
+        question, snapshot, llm=fake, model=MODELO
     )
 
     assert outcome.plan is not None
@@ -520,10 +520,28 @@ def test_o_capability_sha_vem_do_snapshot_e_nao_e_inventado(question, snapshot):
     assert outcome.provenance.capability_sha256 == capability_sha256(snapshot)
 
 
-def test_called_at_e_injetavel_para_o_teste_nao_depender_do_relogio(question, snapshot):
+def test_called_at_vem_da_resposta_e_nao_do_relogio_do_planejador(question, snapshot):
+    """M-1: quem sabe quando a chamada aconteceu e quem a fez.
+
+    O planejador nao le o relogio - o que e o que permite uma resposta de cache
+    carregar o instante da chamada *original* em vez de "agora"."""
     outcome, _ = _planeja(question, snapshot, PLANO_VALIDO)
 
     assert outcome.provenance.called_at == CHAMADO_EM
+    assert outcome.provenance.called_at == outcome.response.called_at
+
+
+def test_o_planejador_nao_le_o_relogio():
+    """Conferido no texto: um `datetime.now` aqui reintroduziria o carimbo que
+    o M-1 tirou, e o sintoma so apareceria com o cache ligado."""
+    from pathlib import Path
+
+    fonte = (
+        Path(__file__).resolve().parents[2] / "src" / "pat" / "research" / "planner.py"
+    ).read_text(encoding="utf-8")
+
+    assert "datetime.now" not in fonte
+    assert "date.today" not in fonte
 
 
 def test_a_procedencia_nao_entra_na_identidade_do_plano(question, snapshot):

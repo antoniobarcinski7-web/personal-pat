@@ -31,8 +31,19 @@ class Paths:
     def runs(self) -> Path:
         return self.home / "runs"
 
+    @property
+    def llm(self) -> Path:
+        """Respostas de modelo gravadas. Separado do bronze de proposito.
+
+        As duas cadeias de procedencia sao paralelas e nunca se encontram: o
+        bronze prova de onde veio um *numero*, isto aqui prova de onde veio uma
+        *frase*. Guardar as duas no mesmo lugar apagaria a distincao no dia em
+        que alguem escrevesse um `verify()` sobre o diretorio inteiro.
+        """
+        return self.home / "llm"
+
     def ensure(self) -> "Paths":
-        for path in (self.home, self.bronze, self.runs):
+        for path in (self.home, self.bronze, self.runs, self.llm):
             path.mkdir(parents=True, exist_ok=True)
         return self
 

@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 
@@ -361,16 +360,17 @@ def plan_question(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: Decimal | None = DEFAULT_TEMPERATURE,
     timeout_s: int = DEFAULT_TIMEOUT_S,
-    called_at: datetime | None = None,
 ) -> PlannerOutcome:
     """Uma pergunta, uma chamada, um plano - ou um erro nomeado.
 
-    `called_at` e injetavel para que o teste nao dependa do relogio; em uso
-    normal e o instante da chamada. Solucao provisoria assumida na revisao do
-    M2.1: quando o cache existir (Milestone 2.3), uma resposta servida do disco
-    precisara carregar o instante da chamada *original*, e carimbar "agora"
-    passaria a mentir. A decisao de como resolver isso e do 2.3; ate la nao ha
-    cache, e o instante local e verdadeiro.
+    O planejador nao carimba o relogio. `called_at` vem da resposta, porque so
+    quem produziu a resposta sabe quando ela foi feita (M-1). Isso resolve a
+    pendencia deixada no M2.1: uma resposta servida do cache carrega o instante
+    da chamada *original*, e carimbar "agora" aqui faria o manifesto afirmar
+    uma chamada que nao aconteceu - com a aparencia de rastro.
+
+    Consequencia para teste: quem quer fixar o instante configura o cliente, e
+    nao esta funcao. E mais fiel, porque e assim que funciona de verdade.
     """
     request = build_request(
         question,
@@ -392,7 +392,7 @@ def plan_question(
         prompt_sha256=request.prompt_sha256,
         response_sha256=response.response_sha256,
         capability_sha256=capability_sha256(snapshot),
-        called_at=called_at or datetime.now(UTC),
+        called_at=response.called_at,
         cached=response.cached,
         client_fingerprint=llm.fingerprint,
     )

@@ -14,6 +14,7 @@ O que estes testes defendem:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -28,6 +29,7 @@ from pat.research.llm import (
 )
 
 TEXTO = "FY2023: 10.09%"
+CHAMADO_EM = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
 SHA_DE_TEXTO = "8dbe1b0c0e1de0e2f6d40ecc9a1a1c2f30ea1bda67a1d8b1b6c1bb0c1a6a9c0f"
 
 
@@ -302,13 +304,27 @@ def test_chamadas_repetidas_sao_identicas():
 
 
 def test_duas_instancias_com_a_mesma_tabela_respondem_igual():
+    """O instante precisa ser fixado para a igualdade valer: `called_at` e o
+    unico campo da resposta que nao e funcao do pedido, e duas chamadas em
+    momentos diferentes sao legitimamente respostas diferentes."""
     request = _request()
     tabela = {request.prompt_sha256: TEXTO}
 
-    uma = FakeLLMClient(tabela).complete(request)
-    outra = FakeLLMClient(tabela).complete(request)
+    uma = FakeLLMClient(tabela, called_at=CHAMADO_EM).complete(request)
+    outra = FakeLLMClient(tabela, called_at=CHAMADO_EM).complete(request)
 
     assert uma == outra
+
+
+def test_called_at_e_o_instante_de_quem_produziu_a_resposta():
+    """M-1: o campo mora na resposta porque so quem a produziu sabe quando ela
+    foi feita. Uma resposta de cache carrega o instante original, e por isso o
+    planejador nao pode carimbar "agora"."""
+    resposta = LLMResponse.for_text(
+        TEXTO, model_id="m", prompt_sha256="a" * 64, called_at=CHAMADO_EM
+    )
+
+    assert resposta.called_at == CHAMADO_EM
 
 
 def test_prompt_nao_registrado_falha_dizendo_o_que_fazer():
