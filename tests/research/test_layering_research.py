@@ -173,19 +173,65 @@ def test_so_o_renderer_formata_numero_para_apresentacao():
 
 # -- o que ainda nao comecou -------------------------------------------------
 #
-# Ate agora este teste tambem exigia que `research/llm/` nao existisse. O M2.1
-# criou o modulo - a porta e os contratos - de proposito, e o guard foi
-# estreitado para o que continua nao iniciado, em vez de removido.
+# Ate o Milestone 2.1 este teste tambem exigia que `research/llm/` nao
+# existisse. O M2.1 criou o modulo - a porta e os contratos - de proposito, e o
+# guard foi estreitado para o que continua nao iniciado, em vez de removido.
 
 
-@pytest.mark.parametrize("modulo", ["planner.py", "writer.py"])
-def test_o_milestone_2_nao_foi_comecado(modulo):
+@pytest.mark.parametrize("modulo", ["writer.py"])
+def test_o_escritor_nao_foi_comecado(modulo):
+    """O M2.2 criou `planner.py`; o escritor e Milestone 3."""
     assert not (RESEARCH / modulo).exists(), (
-        f"{modulo} pertence ao Milestone 2 e nao deveria existir ainda"
+        f"{modulo} pertence ao Milestone 3 e nao deveria existir ainda"
     )
 
 
-# -- a porta de LLM: contrato, nunca provider --------------------------------
+# -- o planejador: fala com modelo, nunca com dado ---------------------------
+
+
+def test_o_planejador_nao_alcanca_dado_persistencia_nem_rede():
+    """A fronteira que sustenta a Fase 3: o modelo nao tem caminho ate o
+    warehouse. Conjunto exato de imports - qualquer travessia nova aparece.
+    """
+    proibidos = (
+        "pat.store",
+        "pat.sources",
+        "pat.parse",
+        "pat.query",
+        "pat.ingest",
+        "pat.build",
+        "pat.semantics",
+        "pat.research.capability",
+        "pat.research.execute",
+        "pat.research.resolve",
+        "httpx",
+        "urllib",
+        "socket",
+        "requests",
+        "duckdb",
+        "pathlib",
+        "os",
+    )
+    for imported in _imports(RESEARCH / "planner.py"):
+        assert not imported.startswith(proibidos), (
+            f"planner.py importa {imported}: o planejador ganhou acesso a "
+            "dado, disco, rede ou execucao"
+        )
+
+
+def test_o_planejador_nao_conhece_provider_nenhum():
+    codigo = _codigo_sem_texto(RESEARCH / "planner.py")
+    for provider in ("anthropic", "openai", "bedrock", "vertex", "api_key", "getenv"):
+        assert provider not in codigo, f"o codigo do planejador menciona {provider!r}"
+
+
+def test_o_planejador_nao_executa_nem_valida():
+    """Ele monta o plano e para. Executar seria apagar a fronteira; validar
+    seria uma segunda implementacao das regras do validador."""
+    fonte = (RESEARCH / "planner.py").read_text(encoding="utf-8")
+
+    for proibido in ("engine.compute", "execute_plan", "validate_plan", "resolve_plan"):
+        assert proibido not in fonte, f"planner.py chama {proibido}"
 
 
 def test_a_porta_de_llm_ainda_nao_tem_adapter_nem_cache():
