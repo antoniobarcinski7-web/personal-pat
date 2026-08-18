@@ -270,10 +270,10 @@ The number/interpretation distinction is structural: `NumericClaim` is the only 
 ## `ResearchRunManifest` and `PlanProvenance`
 
 ```
-PlanProvenance         model_id, temperature, max_tokens,
+PlanProvenance         model_id, temperature: Decimal | None, max_tokens,
                        system_prompt_sha256, prompt_sha256, response_sha256,
                        capability_sha256, called_at: AwareDatetime,
-                       cached: bool
+                       cached: bool, client_fingerprint: str
 
 ResearchRunManifest    manifest_id, question_id, plan_id,
                        planner: PlanProvenance,
@@ -285,6 +285,8 @@ ResearchRunManifest    manifest_id, question_id, plan_id,
 ```
 
 `PlanProvenance` is separate from `ResearchPlan` **precisely so it stays out of the plan hash** — two different models producing the same plan produce the same `plan_id`.
+
+`temperature` is nullable because it is optional in the request: `None` means no sampling override was asked for, not an implicit zero (§13). `client_fingerprint` is the one field that says *under which generation configuration* the plan was produced; it is deliberately opaque — `<provider>/<adapter_version>/<config_sha8>` — because naming a provider's mechanism here would put one vendor's vocabulary in the universal contract, and it stays auditable through `adapter_version`, under the same discipline as `extractor_version` and `metric_version`.
 
 **No parallel versions of existing concepts.** `MetricRef`, `MetricResult`, `MetricUnavailable`, `ReportingScope`, `Fidelity`, `Dimension`, `SourceTier`, `Sha256`, `AwareDatetime`, `Frozen`, `weakest()` are all reused as-is.
 
@@ -591,7 +593,7 @@ Post-LLM validation, in order: length bound → token extraction → unknown-tok
 
 Behaviour on rejection: print the rejection code, the offending span, and the `response_sha256` (the raw response is in the cache and retrievable); exit non-zero. **The numbers are still printed** — the deterministic answer does not depend on the Writer, so a Writer failure costs you the prose, never the result.
 
-Temperature 0 for both calls, with the caveat stated plainly in the docs: temperature 0 reduces variance, it does not produce determinism, and no part of the reproducibility story may rest on it.
+No temperature is requested for either call. The original decision here was temperature 0, with the caveat stated plainly: temperature 0 reduces variance, it does not produce determinism, and no part of the reproducibility story may rest on it. The pre-2.3 audit drew the consequence that caveat already implied — if reproducibility does not rest on the field, nothing is lost by not asking for it, and requiring it in a universal contract only forces adapters to carry a parameter several models no longer accept. The generation configuration is the adapter's, declared upward as `client_fingerprint` (§13, §14).
 
 ---
 
@@ -605,8 +607,8 @@ class LLMRequest:
     system: str
     user: str
     model: str
-    max_tokens: int
-    temperature: Decimal          # Decimal, not float — project rule
+    max_tokens: int               # generation ceiling for the call
+    temperature: Decimal | None = None   # optional; Decimal, not float — project rule
     stop_sequences: tuple[str, ...] = ()
     timeout_s: int = 60
 
@@ -621,10 +623,18 @@ class LLMResponse:
 
 @runtime_checkable
 class LLMClient(Protocol):
+    @property
+    def fingerprint(self) -> str: ...    # <provider>/<adapter_version>/<config_sha8>
     def complete(self, request: LLMRequest) -> LLMResponse: ...
 ```
 
-Notes: `model_id` records what actually answered, which can differ from what was asked for (aliases). `prompt_sha256` = `sha256(canonical({system, user, model, max_tokens, temperature, stop_sequences}))` — the full request, so a system-prompt edit invalidates the cache. `response_sha256` = `sha256(text.encode())`.
+Notes: `model_id` records what actually answered, which can differ from what was asked for (aliases). `prompt_sha256` = `sha256(canonical({system, user, model, max_tokens, temperature, stop_sequences}))` — the full request minus transport, so a system-prompt edit invalidates it. A `None` temperature is omitted from the canonical form, so "no sampling preference" and an explicit `Decimal("0")` are distinct identities. `response_sha256` = `sha256(text.encode())`.
+
+**Generation parameters.** `temperature` is optional, and the default is not to ask for one. It is not a concept of this architecture: no branch of the system reads the value, and temperature 0 reduces variance without producing determinism (§12). Requiring it would force the adapter either to drop a requested value silently or to dictate to the provider what it may offer — both invert the direction of adaptation. When supplied it must be `Decimal`, never `float`, because it enters the canonical identity. It is part of the generation configuration and is recorded in `PlanProvenance`; a non-null value there means the override was requested *and* applied, because an adapter that cannot honour one must fail rather than discard it quietly.
+
+`max_tokens` is the generation ceiling for the call — reasoning and visible text together, where the provider distinguishes them — and not a budget for the plan. Default 16384. Truncation surfaces as `stop_reason`, with its own named failure, rather than as a half-written plan.
+
+Everything provider-specific stays out of the core contract. The concrete adapter carries its own generation profile, covered by `ADAPTER_VERSION`: profile v1 does not configure thinking, leaving the provider default — and that non-configuration is itself a v1 decision, so if it changes the version increments. What was actually used travels upward as one opaque field, `client_fingerprint`. Naming a provider's mechanism in the universal contract (a `thinking_enabled` field, say) would be the same error that citing `cd_conta` in `concepts.py` would be in Phase 2.
 
 Errors are three named exceptions, never provider types leaking upward: `LLMTimeout`, `LLMTransportError`, `LLMRefused`. No retries in the client (see §12); a timeout is a failed run.
 
@@ -657,7 +667,11 @@ Identical mechanics to `BronzeStore` (two-level fan-out, read-only mode, hash ve
 
 ## `llm_call` table
 
-`call_id · kind ('planner'|'writer') · model_id · prompt_sha256 · response_sha256 · temperature · max_tokens · called_at · cached · manifest_id`.
+`call_id · kind ('planner'|'writer') · model_id · client_fingerprint · call_sha256 · prompt_sha256 · response_sha256 · temperature (nullable) · max_tokens · called_at · cached · manifest_id`.
+
+`call_sha256` is the cache key defined above; it is stored even though it is derivable from `prompt_sha256` and `client_fingerprint`, because here it is an index — "which cache entry served this run?" should be one lookup, not a recomputation. It is *not* a field of `PlanProvenance`, where a derivable value would be a field without independent meaning.
+
+`temperature` is nullable, and null is the normal case: it records that no sampling override was requested, not that one was zero.
 
 ## `research_run` table
 
@@ -671,7 +685,16 @@ Escrita e leitura usam conexões distintas: a execução lê o warehouse em modo
 
 ## Retrieval
 
-`pat runs --research <manifest_id>` (or a follow-on command) reads `research_run`, joins `llm_call`, and resolves both hashes to bytes in `data/llm/`. Cache lookup on a new run is by `prompt_sha256`: hit → `LLMResponse(cached=True)`, no network, and a past run replays exactly.
+`pat runs --research <manifest_id>` (or a follow-on command) reads `research_run`, joins `llm_call`, and resolves both hashes to bytes in `data/llm/`.
+
+**Cache identity.** Lookup is *not* by `prompt_sha256`. The two hashes answer different questions:
+
+- `prompt_sha256` identifies the canonical question — system prompt, user prompt, model, `max_tokens`, `stop_sequences`, and `temperature` when one was requested. It is what the PAT *asked*.
+- `call_sha256` identifies the effective call: `sha256(canonical({call_version, prompt_sha256, client_fingerprint}))`. It is what the adapter actually *sent*.
+
+`client_fingerprint` therefore participates in call identity. Two requests carrying the same system prompt and the same user prompt but different effective provider configuration are **not** the same call, and must not share a response: the adapter's generation profile can change the answer while `prompt_sha256` stays fixed. A cache keyed on the prompt alone would serve one configuration's response to a call made under another — and `response_sha256` would still match, because it matches whatever was in fact served. The trail would stay internally consistent and become false.
+
+Lookup on a new run is therefore by `call_sha256`: hit → `LLMResponse(cached=True)`, no network, and a past run replays exactly. `prompt_sha256` remains recorded and unchanged, so "which configurations have already answered this question?" stays answerable.
 
 **Bronze's meaning is preserved by construction**: nothing under `data/llm/` is ever registered as a `RawDocument`, gets a `Retrieval`, or is reachable from `AsOf.provenance()`. The two provenance chains are parallel and never merge — which is correct, because one proves where a *number* came from and the other proves where a *sentence* came from.
 
