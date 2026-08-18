@@ -16,10 +16,18 @@ congeladas. Dois motivos para divergir, ambos verificaveis:
 2. `extra="forbid"` e a validacao de tipo sao o padrao de fronteira do projeto:
    campo inesperado falha na entrada, e nao tres camadas adiante.
 
-Nenhum campo aqui e especulativo. Todos alimentam `PlanProvenance`
-(`contracts/research.py`), que ja existe desde o Milestone 1 e ja pede
-`model_id`, `temperature`, `max_tokens`, `system_prompt_sha256`,
-`prompt_sha256`, `response_sha256` e `cached`.
+Nenhum campo aqui e especulativo: todos alimentam `PlanProvenance`
+(`contracts/research.py`). Mas alimentar a procedencia nao e, sozinho,
+justificativa para um campo ser *obrigatorio* - `temperature` estava no
+contrato por heranca de um modelo mental de "o que uma chamada de LLM tem",
+que era verdadeiro para a geracao de APIs de 2024. A auditoria que precedeu o
+M2.3 aplicou o criterio que vale aqui: o contrato interno representa conceitos
+estaveis da arquitetura, nao peculiaridades acidentais de um provider ou de
+uma epoca. Um campo sobrevive se qualquer cliente hipotetico consegue honra-lo.
+
+Por esse teste, `system`, `user`, `model`, `max_tokens`, `stop_sequences` e
+`timeout_s` passam; `temperature` nao, e por isso e opcional, com a divida
+registrada na propria nota do campo.
 
 O que este modulo deliberadamente NAO tem
 ------------------------------------------
@@ -37,7 +45,7 @@ from __future__ import annotations
 
 import hashlib
 from decimal import Decimal
-from typing import Protocol, runtime_checkable
+from typing import Annotated, Protocol, runtime_checkable
 
 from pydantic import Field, field_validator
 
@@ -93,13 +101,41 @@ class LLMRequest(Frozen):
     system: str = Field(min_length=1)
     user: str = Field(min_length=1)
     model: str = Field(min_length=1, description="O que foi pedido; a resposta diz o que atendeu")
-    max_tokens: int = Field(gt=0)
-    temperature: Decimal = Field(
-        ge=0,
-        le=1,
-        description="Decimal, nunca float: entra na identidade canonica, e "
-        "binario de ponto flutuante nao reproduz entre plataformas",
+    max_tokens: int = Field(
+        gt=0,
+        description="Teto de geracao da chamada - raciocinio interno e texto "
+        "visivel somados, onde o provider fizer essa distincao. Nao e "
+        "orcamento do plano: sob raciocinio, o que sobra para o JSON e o que o "
+        "raciocinio nao consumiu, e isso nao e conhecivel de antemao",
     )
+    temperature: Annotated[Decimal, Field(ge=0, le=1)] | None = Field(
+        default=None,
+        description="Decimal, nunca float: entra na identidade canonica, e "
+        "binario de ponto flutuante nao reproduz entre plataformas. `None` "
+        "significa que nao ha preferencia de amostragem a expressar",
+    )
+    """Opcional porque temperatura nao e conceito desta arquitetura.
+
+    Nenhum ramo do sistema le o valor, e a nota de `DEFAULT_TEMPERATURE` diz por
+    extenso que a reprodutibilidade nao se apoia nele. E um parametro de uma
+    *geracao* de APIs - modelos que trocam amostragem configuravel por
+    deliberacao adaptativa nao o expoem, e mais de um fornecedor ja o
+    aposentou. Obriga-lo forcaria o adapter ou a mentir (descartar em silencio)
+    ou a ditar ao provider o que ele pode oferecer; as duas coisas invertem a
+    seta: e o adapter que se adapta ao contrato.
+
+    `None` nao entra em `prompt_sha256` - chave nula e omitida pela forma
+    canonica -, entao `None` e `Decimal("0")` sao identidades distintas. Isso e
+    correto: "sem preferencia" e "greedy explicito" sao pedidos diferentes.
+
+    Divida registrada: a forma certa e um `provider_options` opaco, ordenado e
+    hasheado, que o core nao interpreta. Nao foi feito agora porque um saco
+    generico com um unico provider e desenho contra a imaginacao - a Fase 2 so
+    provou seu adapter contra um segundo regime concreto
+    (`test_second_framework.py`), e a mesma disciplina vale aqui. Gatilho para
+    migrar: o segundo adapter, ou o terceiro parametro de geracao que pedir
+    entrada neste contrato.
+    """
     stop_sequences: tuple[str, ...] = ()
     timeout_s: int = Field(default=60, gt=0)
 
@@ -213,6 +249,27 @@ class LLMClient(Protocol):
     verificar.
     """
 
+    @property
+    def fingerprint(self) -> str:
+        """Quem e este cliente, e sob que configuracao de geracao.
+
+        Formato `<provider>/<adapter_version>/<config_sha8>`. Opaco para quem
+        chama; o core nunca o interpreta.
+
+        Existe porque `prompt_sha256` identifica o que o PAT *pediu* e nao o
+        que o adapter de fato *enviou*. Enquanto o adapter nao tinha escolha
+        nenhuma os dois coincidiam; no momento em que ele passa a decidir algo
+        - omitir um parametro que o modelo recusa, escolher um perfil de
+        raciocinio - deixam de coincidir, e um cache indexado so pelo prompt
+        serviria a resposta de uma configuracao para uma chamada feita sob
+        outra. O rastro continuaria internamente consistente e passaria a ser
+        falso, que e a pior categoria de erro que este projeto reconhece.
+
+        E o cache (Milestone 2.3) que compoe os dois numa chave; a porta so
+        exige que todo cliente saiba se identificar.
+        """
+        ...
+
     def complete(self, request: LLMRequest) -> LLMResponse: ...
 
 
@@ -236,11 +293,20 @@ class FakeLLMClient:
         *,
         model_id: str | None = None,
         stop_reason: str = "end_turn",
+        fingerprint: str = "fake/v1/00000000",
     ) -> None:
         self._responses: dict[str, str] = dict(responses or {})
         self._model_id = model_id
         self._stop_reason = stop_reason
+        self._fingerprint = fingerprint
         self._calls: list[LLMRequest] = []
+
+    @property
+    def fingerprint(self) -> str:
+        """Configuravel para que um teste consiga escrever duas configuracoes
+        diferentes respondendo ao mesmo prompt - que e exatamente o caso que o
+        cache do 2.3 precisa distinguir."""
+        return self._fingerprint
 
     @property
     def calls(self) -> tuple[LLMRequest, ...]:

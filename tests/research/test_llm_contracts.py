@@ -101,6 +101,26 @@ def test_temperatura_e_decimal_e_nao_float():
     assert isinstance(_request(temperature=Decimal("0.7")).temperature, Decimal)
 
 
+def test_temperatura_e_opcional_e_o_default_e_nao_pedir():
+    """Temperatura nao e conceito desta arquitetura: e parametro de uma geracao
+    de APIs, e varios modelos ja a recusam. Obriga-la faria o adapter escolher
+    entre mentir e ditar ao provider o que ele pode oferecer."""
+    assert LLMRequest(
+        system="s", user="u", model="m", max_tokens=1024
+    ).temperature is None
+
+
+def test_nao_pedir_temperatura_e_pedir_zero_sao_identidades_diferentes():
+    """`None` e omitido da forma canonica, `Decimal("0")` serializa como "0".
+    A assimetria e deliberada: "sem preferencia" e "greedy explicito" sao
+    pedidos diferentes, e um cache que os confundisse serviria a resposta de um
+    para o outro."""
+    sem = _request(temperature=None)
+    zero = _request(temperature=Decimal("0"))
+
+    assert sem.prompt_sha256 != zero.prompt_sha256
+
+
 # -- identidade da requisicao ------------------------------------------------
 
 
@@ -205,6 +225,29 @@ def test_texto_vazio_e_resposta_valida():
 
 def test_o_duplo_satisfaz_o_protocolo():
     assert isinstance(FakeLLMClient(), LLMClient)
+
+
+def test_todo_cliente_sabe_se_identificar():
+    """`prompt_sha256` diz o que o PAT *pediu*; o fingerprint diz o que o
+    adapter de fato *enviou*. Sem o segundo, duas configuracoes de geracao
+    diferentes respondendo ao mesmo prompt seriam indistinguiveis - e o cache
+    do 2.3 serviria a resposta de uma para a chamada feita sob a outra, com o
+    `response_sha256` batendo e confirmando a versao errada."""
+    assert FakeLLMClient().fingerprint == "fake/v1/00000000"
+    assert FakeLLMClient(fingerprint="fake/v2/abcd1234").fingerprint == "fake/v2/abcd1234"
+
+
+def test_o_mesmo_prompt_sob_configuracoes_diferentes_nao_e_a_mesma_chamada():
+    """O caso concreto que o fingerprint existe para separar: prompt identico,
+    configuracao de geracao diferente, respostas legitimamente diferentes."""
+    request = _request()
+    v1 = FakeLLMClient(fingerprint="fake/v1/00000000")
+    v2 = FakeLLMClient(fingerprint="fake/v2/abcd1234")
+    v1.register(request, "resposta sob v1")
+    v2.register(request, "resposta sob v2")
+
+    assert v1.complete(request).prompt_sha256 == v2.complete(request).prompt_sha256
+    assert v1.fingerprint != v2.fingerprint
 
 
 def test_devolve_exatamente_a_resposta_configurada():

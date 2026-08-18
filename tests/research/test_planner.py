@@ -208,8 +208,60 @@ def test_o_request_carrega_o_system_prompt_do_modulo(question, snapshot):
     assert request.system == SYSTEM_PROMPT
     assert request.model == MODELO
     assert request.max_tokens == DEFAULT_MAX_TOKENS
-    assert request.temperature == DEFAULT_TEMPERATURE
-    assert isinstance(request.temperature, Decimal)
+    assert request.temperature is DEFAULT_TEMPERATURE is None
+
+
+def test_o_override_de_temperatura_e_pedido_explicito_e_continua_decimal(
+    question, snapshot
+):
+    """Por default o PAT nao expressa preferencia de amostragem - quem escolhe a
+    configuracao de geracao e o adapter. Mas quem pedir continua obrigado a
+    `Decimal`, e o pedido aparece na procedencia: valor nao-nulo ali significa
+    que foi pedido *e* aplicado."""
+    fake = FakeLLMClient()
+    pedido = build_request(question, snapshot, model=MODELO, temperature=Decimal("0.7"))
+    fake.register(pedido, json.dumps(PLANO_VALIDO))
+
+    outcome = plan_question(
+        question,
+        snapshot,
+        llm=fake,
+        model=MODELO,
+        temperature=Decimal("0.7"),
+        called_at=CHAMADO_EM,
+    )
+
+    assert isinstance(fake.calls[0].temperature, Decimal)
+    assert outcome.provenance.temperature == Decimal("0.7")
+
+
+def test_a_procedencia_registra_a_configuracao_de_geracao_do_cliente(
+    question, snapshot
+):
+    """`temperature=None` sozinho nao diz sob que configuracao o plano saiu.
+    `client_fingerprint` responde isso - e e ele, e nao um campo `thinking`,
+    porque nome de mecanismo de fornecedor nao entra em contrato universal."""
+    fake = _fake(question, snapshot, PLANO_VALIDO, fingerprint="fake/v9/deadbeef")
+    outcome = plan_question(
+        question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM
+    )
+
+    assert outcome.provenance.temperature is None
+    assert outcome.provenance.client_fingerprint == "fake/v9/deadbeef"
+
+
+def test_resposta_truncada_falha_com_nome_proprio(question, snapshot):
+    """Um JSON cortado no teto de tokens tambem levanta `JSONDecodeError`, e
+    sairia como MALFORMED_JSON - o mesmo nome de "o modelo escreveu prosa".
+    Remedios opostos sob um nome so e achado intermitente."""
+    cortado = json.dumps(PLANO_VALIDO)[:120]
+    fake = _fake(question, snapshot, cortado, stop_reason="max_tokens")
+
+    with pytest.raises(PlannerError) as erro:
+        plan_question(question, snapshot, llm=fake, model=MODELO, called_at=CHAMADO_EM)
+
+    assert erro.value.failure is PlannerFailure.TRUNCATED_RESPONSE
+    assert "max_tokens" in str(erro.value)
 
 
 def test_o_system_prompt_diz_a_separacao_e_as_proibicoes():

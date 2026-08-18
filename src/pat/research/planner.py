@@ -66,15 +66,32 @@ __all__ = [
 ]
 
 
-DEFAULT_TEMPERATURE = Decimal("0")
-"""Zero por decisao de desenho (§12 da proposta). Com a ressalva dita por
-extenso: temperatura zero reduz variancia, nao produz determinismo, e nenhuma
-parte da reprodutibilidade do sistema se apoia nisso - ela se apoia no plano
-salvo e nos hashes."""
+DEFAULT_TEMPERATURE: Decimal | None = None
+"""Nenhuma preferencia de amostragem, por decisao de desenho.
 
-DEFAULT_MAX_TOKENS = 4096
-"""Suficiente para um plano de dezenas de passos e pequeno o bastante para que
-uma resposta truncada apareca como `stop_reason` e nao como plano pela metade."""
+A proposta original pedia zero, com a ressalva dita por extenso: temperatura
+zero reduz variancia, nao produz determinismo, e nenhuma parte da
+reprodutibilidade do sistema se apoia nisso - ela se apoia no plano salvo e nos
+hashes. A auditoria do M2.3 tirou a consequencia que a ressalva ja implicava:
+se a reprodutibilidade nao se apoia no campo, nada se perde ao nao pedi-lo, e
+pedir zero num contrato universal so obrigaria adapters a lidar com um
+parametro que varios modelos ja nem aceitam.
+
+`None` nao e "zero implicito". E a afirmacao de que quem escolhe a
+configuracao de geracao e o adapter, que a declara em `client_fingerprint`."""
+
+DEFAULT_MAX_TOKENS = 16384
+"""Teto de geracao da chamada, nao orcamento do plano.
+
+O valor anterior (4096) foi dimensionado para um mundo sem raciocinio interno,
+e acumulava um segundo papel: teto apertado como canario de truncamento. O
+canario deixou de funcionar quando o teto passou a cobrir raciocinio e texto
+juntos - ele dispara quando o *raciocinio* foi longo, que nao e a mesma coisa
+que o plano ter ficado grande, nem e controlavel pelo prompt.
+
+O papel de canario voltou para onde pertence: `stop_reason`, com uma falha
+nomeada (`PlannerFailure.TRUNCATED_RESPONSE`). O teto aqui so precisa ser
+folgado."""
 
 DEFAULT_TIMEOUT_S = 60
 
@@ -167,6 +184,7 @@ class PlannerFailure(StrEnum):
     """Por que a resposta nao virou plano. Sempre um destes, nunca uma
     excecao crua de biblioteca."""
 
+    TRUNCATED_RESPONSE = "truncated_response"
     MALFORMED_JSON = "malformed_json"
     NOT_AN_OBJECT = "not_an_object"
     CONTRACT_VIOLATION = "contract_violation"
@@ -255,7 +273,7 @@ def build_request(
     *,
     model: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-    temperature: Decimal = DEFAULT_TEMPERATURE,
+    temperature: Decimal | None = DEFAULT_TEMPERATURE,
     timeout_s: int = DEFAULT_TIMEOUT_S,
 ) -> LLMRequest:
     """Monta a chamada. Separado de `plan_question` para poder ser inspecionado
@@ -283,6 +301,21 @@ def parse_plan(response: LLMResponse, question: ResearchQuestion) -> ResearchPla
     de sobrescrita - sobrescrever esconderia um modelo confuso sobre
     identidade, e o proximo sintoma apareceria mais longe da causa.
     """
+    # Antes do parse, de proposito: um JSON cortado ao meio tambem levanta
+    # `JSONDecodeError`, e sairia como MALFORMED_JSON - o mesmo nome que "o
+    # modelo escreveu prosa em vez de JSON". Duas causas com remedios opostos
+    # ("aumente o teto" e "conserte o prompt") sob um nome so e a definicao de
+    # achado ruim, e o pior tipo deles: intermitente, porque depende do
+    # tamanho do plano do dia.
+    if response.stop_reason == "max_tokens":
+        raise PlannerError(
+            PlannerFailure.TRUNCATED_RESPONSE,
+            "a geracao atingiu o teto de tokens antes de fechar o JSON; "
+            "aumente max_tokens",
+            response_sha256=response.response_sha256,
+            detail=response.text[-200:],
+        )
+
     try:
         payload = json.loads(response.text)
     except json.JSONDecodeError as exc:
@@ -326,7 +359,7 @@ def plan_question(
     llm: LLMClient,
     model: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-    temperature: Decimal = DEFAULT_TEMPERATURE,
+    temperature: Decimal | None = DEFAULT_TEMPERATURE,
     timeout_s: int = DEFAULT_TIMEOUT_S,
     called_at: datetime | None = None,
 ) -> PlannerOutcome:
@@ -361,6 +394,7 @@ def plan_question(
         capability_sha256=capability_sha256(snapshot),
         called_at=called_at or datetime.now(UTC),
         cached=response.cached,
+        client_fingerprint=llm.fingerprint,
     )
 
     return PlannerOutcome(plan=plan, provenance=provenance, response=response)

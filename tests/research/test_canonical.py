@@ -151,6 +151,7 @@ def test_plan_id_ignora_a_procedencia_do_modelo(question):
         response_sha256=SHA,
         capability_sha256=SHA,
         called_at=datetime(2025, 7, 1, tzinfo=UTC),
+        client_fingerprint="fake/v1/00000000",
     )
     outra = procedencia.model_copy(update={"model_id": "modelo-b"})
 

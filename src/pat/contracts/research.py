@@ -576,7 +576,15 @@ class PlanProvenance(Frozen):
     """
 
     model_id: str
-    temperature: Decimal
+    temperature: Decimal | None = None
+    """`None` quando o PAT nao pediu override de amostragem - que e o caso
+    normal. Nao e "zero implicito": e a afirmacao de que valeu a configuracao
+    do adapter, identificada por `client_fingerprint`. O campo e opcional
+    porque temperatura nao e conceito desta arquitetura - nenhum ramo do
+    sistema le o valor, e a propria nota de `DEFAULT_TEMPERATURE` diz que a
+    reprodutibilidade nao se apoia nele. Um valor nao-nulo aqui significa que
+    foi pedido *e* aplicado: adapter que nao consegue honrar um override tem
+    que falhar, nunca descartar em silencio."""
     max_tokens: int
     system_prompt_sha256: Sha256
     prompt_sha256: Sha256
@@ -584,6 +592,20 @@ class PlanProvenance(Frozen):
     capability_sha256: Sha256
     called_at: AwareDatetime
     cached: bool = False
+    client_fingerprint: str = Field(
+        min_length=1,
+        description="Quem respondeu e sob que configuracao de geracao, no "
+        "formato <provider>/<adapter_version>/<config_sha8>",
+    )
+    """Opaco de proposito. Registrar `thinking_enabled` ou `budget_tokens` aqui
+    poria vocabulario de um fornecedor no contrato universal - o mesmo erro que
+    citar `cd_conta` em `concepts.py` seria na Fase 2 - e nao generalizaria:
+    outro provider chama a mesma ideia de outro nome, ou nao a tem.
+
+    Continua auditavel porque resolve: o `adapter_version` embutido cobre o
+    perfil de geracao, que e codigo versionado sob a mesma disciplina de
+    `extractor_version` e `metric_version`. Auditar uma chamada antiga e ler o
+    fingerprint e o commit correspondente."""
 
 
 class ResearchRunManifest(Frozen):
