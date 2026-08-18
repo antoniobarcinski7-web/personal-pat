@@ -171,11 +171,78 @@ def test_so_o_renderer_formata_numero_para_apresentacao():
     )
 
 
-# -- o Milestone 1 nao adiantou o Milestone 2 --------------------------------
+# -- o que ainda nao comecou -------------------------------------------------
+#
+# Ate agora este teste tambem exigia que `research/llm/` nao existisse. O M2.1
+# criou o modulo - a porta e os contratos - de proposito, e o guard foi
+# estreitado para o que continua nao iniciado, em vez de removido.
 
 
-@pytest.mark.parametrize("modulo", ["llm", "planner.py", "writer.py"])
+@pytest.mark.parametrize("modulo", ["planner.py", "writer.py"])
 def test_o_milestone_2_nao_foi_comecado(modulo):
     assert not (RESEARCH / modulo).exists(), (
         f"{modulo} pertence ao Milestone 2 e nao deveria existir ainda"
     )
+
+
+# -- a porta de LLM: contrato, nunca provider --------------------------------
+
+
+def test_a_porta_de_llm_ainda_nao_tem_adapter_nem_cache():
+    """O M2.1 e so contrato. Adapter concreto e cache sao 2.2 e 2.3.
+
+    Checa o conjunto EXATO de arquivos: uma lista negra deixaria passar
+    `openai.py` no dia em que alguem o criasse.
+    """
+    llm = RESEARCH / "llm"
+    assert {p.name for p in llm.glob("*.py")} == {"__init__.py"}
+
+
+def _codigo_sem_texto(path: Path) -> str:
+    """Fonte com comentarios e literais de string removidos.
+
+    Necessario porque a docstring do modulo *enuncia* a regra ("nada aqui
+    conhece Anthropic"), e uma busca no texto cru acusaria a documentacao da
+    proibicao como se fosse a violacao dela.
+    """
+    import io
+    import tokenize
+
+    pedacos = []
+    for token in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline):
+        if token.type in (tokenize.COMMENT, tokenize.STRING):
+            continue
+        pedacos.append(token.string)
+    return " ".join(pedacos).lower()
+
+
+def test_a_porta_de_llm_nao_conhece_provider_nenhum():
+    """Se um nome de fornecedor aparecer no *codigo*, a porta deixou de ser porta."""
+    codigo = _codigo_sem_texto(RESEARCH / "llm" / "__init__.py")
+    for provider in ("anthropic", "openai", "bedrock", "vertex", "api_key", "getenv"):
+        assert provider not in codigo, f"o codigo da porta de LLM menciona {provider!r}"
+
+
+def test_a_porta_de_llm_nao_alcanca_dado_nem_persistencia():
+    """O modelo nao tem caminho ate o warehouse, e a porta e onde isso comeca.
+
+    Conjunto exato de imports: qualquer coisa nova que atravesse aparece aqui.
+    """
+    proibidos = (
+        "pat.store",
+        "pat.sources",
+        "pat.parse",
+        "pat.query",
+        "pat.semantics",
+        "pat.build",
+        "pat.ingest",
+        "httpx",
+        "urllib",
+        "socket",
+        "requests",
+    )
+    for imported in _imports(RESEARCH / "llm" / "__init__.py"):
+        assert not imported.startswith(proibidos), (
+            f"a porta de LLM importa {imported}: o modelo ganhou um caminho "
+            "ate dado, persistencia ou rede"
+        )
