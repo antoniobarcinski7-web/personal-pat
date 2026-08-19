@@ -190,11 +190,73 @@ CREATE TABLE IF NOT EXISTS research_run (
 );
 
 -- Procedencia de modelo (planner/writer) nao tem coluna aqui: no caminho
--- deterministico ela e nula, e no Milestone 2 ela entra pela tabela `llm_call`,
--- que referencia `manifest_id`. Uma corrida sem LLM nao carrega colunas de LLM.
+-- deterministico ela e nula, e ela entra pela tabela `llm_call` abaixo, que
+-- referencia `manifest_id`. Uma corrida sem LLM nao carrega colunas de LLM.
 
 CREATE INDEX IF NOT EXISTS idx_research_run_plan
     ON research_run (plan_id, executed_at);
+
+-- ---------------------------------------------------------------------------
+-- llm_call: o que o modelo respondeu, e sob que configuracao
+-- ---------------------------------------------------------------------------
+-- Indice, nao identidade. O cache em `data/llm/` e a fonte da verdade dos
+-- bytes; esta tabela existe para responder perguntas de auditoria por consulta
+-- em vez de varredura de diretorio.
+--
+-- `manifest_id` e NULAVEL de proposito (M-3). Um plano recusado pelo validador
+-- produz uma chamada real - que custou dinheiro, gerou uma resposta e tem
+-- rastro - e nenhum manifesto, porque nada executou. As alternativas seriam
+-- inventar um manifest_id ou descartar o registro da chamada; a primeira
+-- fabrica procedencia, a segunda perde o rastro de uma recusa, que e
+-- justamente o que o D-11 manda guardar.
+--
+-- `call_sha256` e derivavel de `prompt_sha256` + `client_fingerprint`, e mesmo
+-- assim tem coluna: aqui ele e indice, e "que entrada de cache serviu esta
+-- corrida?" deve ser uma consulta e nao um recalculo. Em `PlanProvenance` ele
+-- nao entra, porque la um valor derivavel seria campo sem significado proprio.
+--
+-- `temperature` e NULAVEL, e nulo e o caso normal: registra que nenhum override
+-- de amostragem foi pedido, nao que ele foi zero.
+--
+-- Append-only, como todo o resto: uma chamada gravada nunca e reescrita.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS llm_call (
+    call_sha256          VARCHAR NOT NULL,
+    kind                 VARCHAR NOT NULL,
+    recorded_at          TIMESTAMPTZ NOT NULL,
+
+    model_id             VARCHAR NOT NULL,
+    client_fingerprint   VARCHAR NOT NULL,
+
+    system_prompt_sha256 VARCHAR NOT NULL,
+    prompt_sha256        VARCHAR NOT NULL,
+    response_sha256      VARCHAR NOT NULL,
+    capability_sha256    VARCHAR NOT NULL,
+
+    temperature          DECIMAL(10, 6),
+    max_tokens           INTEGER NOT NULL,
+
+    called_at            TIMESTAMPTZ NOT NULL,
+    cached               BOOLEAN NOT NULL,
+
+    manifest_id          VARCHAR,
+
+    -- Nao e `call_sha256` sozinho: a mesma chamada pode ser servida do cache em
+    -- corridas diferentes, e cada uma dessas vezes e um fato distinto - com
+    -- `called_at` identico e `recorded_at` proprio. O instante de gravacao e o
+    -- que os separa, e por isso ele entra na chave.
+    --
+    -- `manifest_id` NAO participa da chave, de proposito: ele e nulo em toda
+    -- chamada de plano recusado, e chave com componente nulo nao restringe
+    -- nada. A unicidade que existe e a que da para garantir.
+    PRIMARY KEY (call_sha256, recorded_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_call_manifest
+    ON llm_call (manifest_id);
+
+CREATE INDEX IF NOT EXISTS idx_llm_call_prompt
+    ON llm_call (prompt_sha256);
 """
 
 
