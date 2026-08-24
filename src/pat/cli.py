@@ -598,9 +598,130 @@ def cmd_run_program(args) -> int:
             capability_sha256=_capability_sha(snapshot),
         )
         _print_program_result(result, envelope.program)
-        return 0 if result.has_any_output else 1
+
+        if not args.writer:
+            return 0 if result.has_any_output else 1
+        if not result.has_any_output:
+            print(
+                "\nnada apurado: sem o que citar, um relatorio seria prosa sobre "
+                "numeros que nao existem.",
+                file=sys.stderr,
+            )
+            return 1
+        return _write_and_review(args, envelope, result, snapshot)
     finally:
         conn.close()
+
+
+def _write_and_review(args, envelope, result, snapshot) -> int:
+    """Escreve o relatorio e passa o critic mecanico. Sem loop entre os dois.
+
+    O critic roda DEPOIS do escritor e antes da substituicao de token - e a
+    unica ordem em que da para distinguir "o modelo escreveu um numero" de "o
+    sistema substituiu um token". Achado duro bloqueia; achado leve acompanha.
+    """
+    from pat.contracts.claims import Severity
+    from pat.research.claims import ground_claims
+    from pat.research.critic import review
+    from pat.research.llm import LLMError
+    from pat.research.llm.cache import call_sha256_of
+    from pat.research.program_writer import substitute, write_report
+    from pat.research.writer import WriterError
+
+    grounded = ground_claims(result)
+
+    try:
+        llm = _llm_client(args)
+    except LLMError as exc:
+        print(f"cliente de modelo indisponivel: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        written = write_report(
+            envelope.question,
+            grounded,
+            snapshot,
+            llm=llm,
+            model=args.model,
+            max_tokens=args.max_tokens,
+        )
+    except WriterError as exc:
+        print(f"\no modelo nao produziu um relatorio: {exc}", file=sys.stderr)
+        print(f"  resposta  {exc.response_sha256[:12]}", file=sys.stderr)
+        return 1
+    except LLMError as exc:
+        print(f"chamada ao modelo falhou: {exc}", file=sys.stderr)
+        return 2
+
+    _record_call(
+        args,
+        written.provenance,
+        call_sha256=call_sha256_of(written.provenance.prompt_sha256, llm.fingerprint),
+    )
+
+    unidades = {
+        hit.quote.unit_id: hit.quote.text
+        for outcome in result.evidence
+        if outcome.result is not None
+        for hit in outcome.result.hits
+    }
+    relatorio = review(
+        written.graph,
+        result=result,
+        prose_blocks=written.blocks,
+        values=grounded.values,
+        unit_texts=unidades,
+        warnings=tuple(grounded.warnings),
+    )
+
+    if relatorio.blocks:
+        print("\nRELATORIO BLOQUEADO PELO CRITIC MECANICO", file=sys.stderr)
+        for achado in relatorio.hard:
+            print(f"  [{achado.code}] {achado.message}", file=sys.stderr)
+            if achado.remedy:
+                print(f"    {achado.remedy}", file=sys.stderr)
+        print(
+            "\nNao ha reescrita automatica, de proposito: 'criticar ate passar' e "
+            "um amostrador que uma hora aprova algo errado.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("\n" + "=" * 72)
+    print("RELATORIO")
+    print("=" * 72)
+    for texto in substitute(written.blocks, grounded.values):
+        print(f"\n{texto}")
+
+    _print_claim_graph(written.graph)
+
+    if relatorio.soft:
+        print(f"\nRESSALVAS DO CRITIC ({len(relatorio.soft)})")
+        for achado in relatorio.soft:
+            print(f"  [{achado.code}] {achado.message}")
+        print(
+            "  Achados leves acompanham a resposta em vez de bloquea-la: o numero "
+            "continua certo, o que falta e a ressalva."
+        )
+    return 0
+
+
+def _print_claim_graph(graph) -> None:
+    from pat.contracts.claims import ClaimKind
+
+    print("\nAFIRMACOES")
+    for especie in ClaimKind:
+        nos = graph.of_kind(especie)
+        if not nos:
+            continue
+        print(f"  {especie.value}: {len(nos)}")
+    for no in graph.of_kind(ClaimKind.CONCLUSION):
+        print(f"\n  CONCLUSAO  {no.claim_id[:12]}")
+        print(f"    {no.text}")
+        print(f"    apoia-se em {len(no.supports)} afirmacao(oes)")
+        print("    seria derrubada por:")
+        for falsificador in no.falsified_by:
+            print(f"      - {falsificador}")
 
 
 def _print_program_result(result, program) -> None:
@@ -2099,6 +2220,14 @@ def build_parser() -> argparse.ArgumentParser:
         "run-program", help="executa um programa ja escrito (SEM modelo)"
     )
     p_runp.add_argument("--program-file", dest="program_file", required=True)
+    p_runp.add_argument(
+        "--writer",
+        action="store_true",
+        help="redige o relatorio e passa o critic mecanico (usa a API)",
+    )
+    p_runp.add_argument("--model", default=DEFAULT_PLANNER_MODEL)
+    p_runp.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
+    p_runp.add_argument("--no-cache", dest="no_cache", action="store_true")
     p_runp.set_defaults(func=cmd_run_program)
 
     # -- Fase 4: a casca conversacional --------------------------------------

@@ -363,10 +363,15 @@ def test_so_o_escritor_e_os_planejadores_falam_com_o_modelo():
     estagio 1 escolhe o que medir e decompor; o estagio 2 ve a FORMA dos
     resultados - direcao, faixa de magnitude, ordem dos contribuidores - e
     escolhe o que procurar no corpus. Nenhum dos dois ve um valor.
+
+    `program_writer.py` entrou na M5.4, e tambem nao ve valor: ele recebe um
+    grafo de nos ja ancorados, com token e rotulo, e so pode ACRESCENTAR
+    leitura e conclusao - especies que nao tem campo de valor nem de endereco.
     """
     assert _files_containing(RESEARCH, "llm.complete(") == {
         "planner.py",
         "program_planner.py",
+        "program_writer.py",
         "writer.py",
     }
 

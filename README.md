@@ -6,7 +6,7 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5, Milestone 5.3.** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5, Milestone 5.4.** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
@@ -14,8 +14,10 @@ com citações, com planner e writer atrás de um Protocol), o primeiro corpus
 qualitativo — documentos da CVM extraídos, indexados e citáveis verbatim, com
 `published_at ≤ as_of` garantido por construção e nenhum modelo no caminho da
 evidência — a decomposição quantitativa, que abre a variação de um total nas
-partes que a produziram com residual explícito, e o programa de pesquisa, que
-junta as duas metades num artefato revisável antes de executar.
+partes que a produziram com residual explícito, o programa de pesquisa, que
+junta as duas metades num artefato revisável antes de executar, e o grafo de
+afirmações com critic mecânico, em que nenhuma frase existe sem procedência
+tipada.
 
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
@@ -393,6 +395,73 @@ mora em `research_run` e `llm_call`.
 
 ---
 
+## Grafo de afirmações e critic (L4) — Fase 5, M5.4
+
+Nenhuma frase de um relatório existe sem procedência tipada. Cinco espécies:
+
+| espécie | procedência exigida | quem cria |
+|---|---|---|
+| `FACT` | `result_id` → `fact_id` → byte no bronze | motor |
+| `CALCULATION` | `result_id`, e o total que ele ajuda a explicar | motor |
+| `QUOTE` | `unit_id` → documento → byte | corpus |
+| `INFERENCE` | `supports` (≥1) + `strength` | modelo |
+| `CONCLUSION` | `supports` (≥1) + `falsified_by` (≥1) | modelo |
+
+```bash
+pat run-program --program-file p.json            # determinístico
+pat run-program --program-file p.json --writer   # + relatório e critic
+```
+
+As três primeiras são verificáveis mecanicamente; as duas últimas não — e é por
+isso que são espécies distintas. A diferença entre "a margem foi 3,89%" e "a
+margem caiu por alavancagem operacional" não pode depender de o leitor prestar
+atenção: ela é estrutural.
+
+`strength` é enum (`quantified`/`attributed`/`suggested`), nunca número. Um
+escore 0–1 seria um número produzido por modelo — e o pior tipo, porque
+pareceria medido.
+
+`falsified_by` é obrigatório numa conclusão. Não é formalidade: uma conclusão que
+não diz o que a derrubaria é opinião, e na prática esse campo é a lista do que
+monitorar no próximo trimestre.
+
+### O portão contra a lavagem de número do emissor
+
+**`CALCULATION` não pode se apoiar em `QUOTE`** — conferido na *construção* do
+grafo, antes do critic, antes do escritor, antes de qualquer prompt. Um relatório
+que violasse isso não chega a existir. O critic confere de novo, porque um grafo
+pode chegar montado por outro caminho.
+
+O grafo também recusa ciclo e recusa leitura que não alcance nenhum nó ancorado —
+uma torre de inferências sem nada embaixo é como um relatório fica eloquente e
+vazio.
+
+### O critic mecânico: metade do critic não é um modelo
+
+Taxonomia fechada. **Duro** bloqueia (`QUOTE_NOT_VERBATIM`,
+`DIGIT_OUTSIDE_QUOTE`, `UNKNOWN_TOKEN`, `EVIDENCE_AFTER_AS_OF`,
+`UNSUPPORTED_CLAIM`, `CONCLUSION_WITHOUT_FALSIFIER`, `ISSUER_NUMBER_LAUNDERED`);
+**leve** acompanha a resposta visível (`FIDELITY_UNDISCLOSED`, `ORPHAN_RESULT`).
+
+A distinção responde "esta resposta pode sair?" — e a resposta certa para um
+número que não resolve até o byte é não. Um relatório que carrega a ressalva é
+mais útil que um limpo por reescrita.
+
+**Não há loop `writer → critic → writer`**, pela mesma razão que não há
+retentativa de planejador: "criticar até passar" é um amostrador que uma hora
+aprova algo errado.
+
+### A regra do dígito ganha exceção tipada
+
+Algarismo é permitido **dentro de bloco de citação, e só lá** — é o que permite
+ao relatório dizer que a companhia falou em "queda de 18% do Brent" sem que esse
+número vire insumo de nada. Fora dali, dígito só por substituição de token.
+
+O critic roda **antes** da substituição: é a única ordem em que dá para
+distinguir "o modelo escreveu um número" de "o sistema substituiu um token".
+
+---
+
 ## Programa de pesquisa (L3/L4) — Fase 5, M5.3
 
 Um `ResearchPlan` responde "quanto foi". Um `ResearchProgram` responde **o que
@@ -652,8 +721,8 @@ trecho voltou em primeiro" tem que ter resposta.
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede, sem LLM) — 878 testes
-uv run pytest tests/research  # só a camada de pesquisa — 451
+uv run pytest              # suite padrão (sem rede, sem LLM) — 904 testes
+uv run pytest tests/research  # só a camada de pesquisa — 477
 uv run pytest tests/corpus    # só a camada de corpus — 58
 uv run pytest -m network   # contra a CVM real — 18 testes
 uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
@@ -706,8 +775,10 @@ src/pat/
 │   ├── corpus.py      SourceDocument, DocumentUnit, QuoteClaim, EvidenceQuery
 │   │                  ← QuoteClaim não aceita Decimal, value, unit nem currency:
 │   │                    número de emissor é citação, jamais insumo de cálculo
-│   └── decomposition.py  Contribution, DecompositionResult — as partes somam o
-│                      todo por construção; o residual nunca é opcional
+│   ├── decomposition.py  Contribution, DecompositionResult — as partes somam o
+│   │                  todo por construção; o residual nunca é opcional
+│   ├── program.py     ResearchProgram, ResultShape — a forma que o estágio 2 vê
+│   └── claims.py      ClaimNode, ClaimGraph — CALCULATION não se apoia em QUOTE
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
@@ -740,6 +811,9 @@ src/pat/
 │   ├── program.py     executa o programa: cálculo + decomposição + evidência
 │   ├── program_planner.py  os dois estágios; o 2º vê forma, nunca valor
 │   ├── shape.py       resultado → forma (direção, faixa, ordem) — sem Decimal
+│   ├── claims.py      resultado → nós ancorados; o modelo nunca os cria
+│   ├── program_writer.py  grafo → leituras e conclusões; nunca vê valor
+│   ├── critic.py      critic mecânico, taxonomia fechada, sem loop
 │   ├── capability.py  o que o sistema sabe fazer; jamais um valor financeiro
 │   ├── validate.py    validação pura: sem banco, sem relógio, sem rede
 │   ├── resolve.py     o que só o warehouse sabe responder
@@ -781,7 +855,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat run-program` junta número, decomposição e citação verbatim numa execução auditável, sem modelo no caminho | 🚧 M5.1–M5.3 |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat run-program --writer` produz relatório em que toda frase tem procedência tipada, e o critic bloqueia o que não resolve até o byte | 🚧 M5.1–M5.4 |
 | **6** | B3 (preços, proventos), BCB, IBGE | | |
 | **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 

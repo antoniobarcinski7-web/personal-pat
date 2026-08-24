@@ -390,11 +390,106 @@ execução auditável.
 
 26 testes novos. Suíte offline: 878.
 
-## M5.4 — Grafo de claims e critic mecânico (planejado)
+## M5.4 — Grafo de claims, writer e critic mecânico ✅
 
-Cinco tipos: `FACT`, `CALCULATION`, `QUOTE`, `INFERENCE`, `CONCLUSION`. Toda
-conclusão precisa de caminho de suporte e de falsificador. Critic mecânico com
-taxonomia fechada, incluindo `ISSUER_NUMBER_LAUNDERED`.
+### As cinco espécies
+
+| espécie | procedência exigida | quem cria |
+|---|---|---|
+| `FACT` | `result_id` → `fact_id` → byte no bronze | motor |
+| `CALCULATION` | `result_id`, mais `supports` para o total que ajuda a explicar | motor |
+| `QUOTE` | `unit_id` → documento → byte | corpus |
+| `INFERENCE` | `supports` (≥1) + `strength` declarada | modelo |
+| `CONCLUSION` | `supports` (≥1) + `falsified_by` (≥1) | modelo |
+
+As três primeiras são **verificáveis mecanicamente**; as duas últimas não são —
+e é exatamente por isso que são espécies distintas. A diferença entre "a margem
+foi 3,89%" e "a margem caiu por alavancagem operacional" não pode depender de o
+leitor prestar atenção: ela é estrutural, aparece no JSON, na tela e no
+relatório.
+
+`INFERENCE` e `CONCLUSION` não têm campo de valor nem de endereço. `strength` é
+enum (`quantified` / `attributed` / `suggested`), nunca número — um escore 0–1
+seria um número produzido por modelo, e o pior tipo, porque pareceria medido.
+
+### As invariantes do grafo
+
+Conferidas na construção, não avisadas:
+
+1. Todo `supports` resolve para um nó que existe.
+2. Não há ciclo.
+3. Toda `INFERENCE`/`CONCLUSION` alcança, por algum caminho, um nó ancorado.
+4. **`CALCULATION` não pode se apoiar em `QUOTE`.**
+
+A quarta é o portão contra a **lavagem de número do emissor**, e ela vive na
+construção do grafo — antes do critic, antes do escritor, antes de qualquer
+prompt. Um relatório que a violasse não chega a existir. O critic confere de
+novo, porque um grafo pode chegar montado por outro caminho (desserializado de
+um arquivo), e a barreira mais importante do sistema merece ser conferida onde a
+resposta sai.
+
+A terceira recusa uma torre de leituras sem nada embaixo — que é como um
+relatório fica eloquente e vazio.
+
+### O writer sobre o grafo
+
+Recebe nós já ancorados, com **token e rótulo, nunca valor**. Só pode
+acrescentar `INFERENCE` e `CONCLUSION`, e só pode citar apontando o `claim_id` de
+um nó `QUOTE` que a execução produziu — o texto do bloco vem da **unidade**, não
+do modelo, o que faz a citação ser verbatim por construção e não por conferência.
+
+Ele *vê* o texto das citações (precisa, para escrever sobre elas). O
+guarda-corpo não é cegueira, é verificação.
+
+### O critic mecânico — metade do critic não é um modelo
+
+Taxonomia fechada. **Duro** é o que torna a resposta errada ou não-auditável;
+**leve** é o que a torna incompleta mas ainda verdadeira.
+
+| código | severidade |
+|---|---|
+| `QUOTE_NOT_VERBATIM` | hard |
+| `DIGIT_OUTSIDE_QUOTE` | hard |
+| `UNKNOWN_TOKEN` | hard |
+| `EVIDENCE_AFTER_AS_OF` | hard |
+| `UNSUPPORTED_CLAIM` | hard |
+| `CONCLUSION_WITHOUT_FALSIFIER` | hard |
+| `ISSUER_NUMBER_LAUNDERED` | hard |
+| `FIDELITY_UNDISCLOSED` | soft |
+| `ORPHAN_RESULT` | soft |
+
+A distinção não é de gosto: ela responde "esta resposta pode sair?", e a resposta
+certa para um número que não resolve até o byte é não. Achado leve **acompanha**
+a resposta, visível — um relatório que carrega a ressalva é mais útil que um
+relatório limpo por reescrita.
+
+**Não há loop `writer → critic → writer`.** Pela mesma razão que não há
+retentativa de planejador: "criticar até passar" é um amostrador que uma hora
+aprova algo errado-mas-aprovado. O critic aponta; ele não corrige, não reescreve
+e não rechama o escritor.
+
+### A regra do dígito, com exceção tipada
+
+Dígito é permitido **dentro de bloco de citação, e só lá**. Fora dele, um
+algarismo só chega por substituição de token. O critic roda **antes** da
+substituição — é a única ordem em que dá para distinguir "o modelo escreveu um
+número" de "o sistema substituiu um token".
+
+### Entregue
+
+| | |
+|---|---|
+| Contratos | `contracts/claims.py` — `ClaimNode`, `ClaimGraph`, `EvidenceStrength`, `CriticFinding`, `CriticReport` |
+| Ancoragem | `research/claims.py` — `ProgramResult` → nós FACT/CALCULATION/QUOTE |
+| Writer | `research/program_writer.py` — grafo → leituras, conclusões e blocos |
+| Critic | `research/critic.py` — determinístico, taxonomia fechada |
+| CLI | `pat run-program --writer` |
+
+O residual material vira **nó**, não rodapé: se ficasse só na nota, uma conclusão
+poderia se apoiar nas contribuições e ignorar o não explicado sem que nada no
+grafo registrasse a omissão.
+
+26 testes novos. Suíte offline: 904.
 
 ## M5.5 — Critic de modelo e workspace (planejado)
 
