@@ -156,13 +156,140 @@ Verificado contra a Petrobras real (`cod_cvm` 9512, 28 documentos do IPE 2024,
 
 ---
 
-## M5.2 — Decomposição por segmento (planejado)
+## M5.2 — Decomposição quantitativa ✅ (eixo COMPONENT)
 
-`FactBreakdown` com eixo (`SEGMENT`, `GEOGRAPHY`, `PRODUCT`, `COMPONENT`) e
-membro mapeado por TOML, na mesma disciplina de `equivalence_basis`. Residual
-explícito, nunca escondido; membros que não fecham geram warning com o resíduo,
-nunca ajuste silencioso. `breakdown=None` significa total consolidado, jamais
-"não sei".
+### O que a decomposição é
+
+`delta_pct` responde *quanto* uma grandeza mudou. Uma decomposição responde *de
+onde* a mudança veio:
+
+```
+delta_total = contribuição_A + contribuição_B + … + residual
+```
+
+É o primeiro passo de toda resposta causal, e ele é **quantitativo**. Um sistema
+que pula direto para "o release diz que foi o Brent" está fazendo jornalismo, não
+research — a citação explica a decomposição, nunca a substitui.
+
+### Entregue
+
+| | |
+|---|---|
+| Contratos | `contracts/decomposition.py` — `BreakdownAxis`, `Contribution`, `DecompositionResult`, `DecompositionUnavailable`, `DecompositionFailureReason` |
+| Catálogo | `semantics/decompositions.py` — identidades declaradas, universal como `concepts.py` |
+| Executor | `research/decompose.py` — determinístico, sem modelo |
+| CLI | `pat decompositions`, `pat decompose` |
+| Aditivo | `ConceptUnavailable` (contrato), `Engine.resolve_concept`, `Engine.mapping_chain_for` |
+
+Três identidades registradas: `gross_profit_by_line@v1`, `ebit_by_line@v1` e
+`ebit_by_stage@v1`. As duas do EBIT coexistem de propósito — uma diz se o
+problema foi na operação ou na estrutura, a outra abre a operação em receita e
+custo. Registrar as duas é mais honesto que escolher uma e chamá-la de *a*
+decomposição do EBIT.
+
+### O residual é o ponto do desenho
+
+A igualdade `contribuições + residual == target_delta` é **exata**, em `Decimal`,
+conferida na construção do contrato. Não existe forma de montar um
+`DecompositionResult` cujas partes não somem o todo: o residual é calculado por
+diferença e absorve sozinho tudo que a identidade não explica.
+
+A tolerância decide se o resultado sai marcado como **fechado**, nunca se ele
+pode existir. Uma decomposição que não fecha continua publicável e diz, no
+próprio corpo, quanto sobrou — e o CLI imprime o residual **sempre**, inclusive
+quando é zero, porque um relatório que só o mostra quando incomoda ensina o
+leitor a não procurar por ele.
+
+O que não existe, e não deve passar a existir: rateio do residual entre membros,
+estimativa de contribuição por regressão, normalização para somar 100%, e membro
+pequeno empurrado para "outros". Cada uma faria a conta fechar sem que ela feche,
+e o resultado teria a aparência exata de uma análise correta.
+
+**Membro presente em um só período recusa**, nunca vira zero. Uma companhia que
+deixou de reportar um componente não contribuiu com "menos o valor inteiro do ano
+passado" — ela mudou de apresentação, e as duas coisas se pareceriam idênticas
+no gráfico.
+
+### Verificado contra dados reais
+
+Petrobras, FY2023 → FY2024, consolidado, `AS OF 2025-06-30`:
+
+| | de | para | efeito | parte |
+|---|---|---|---|---|
+| Despesas operacionais líquidas | 80.591 | 109.261 | −28.670 | 55,0% |
+| Receita líquida | 511.994 | 490.829 | −21.165 | 40,6% |
+| Custo dos bens e serviços | 242.061 | 244.367 | −2.306 | 4,4% |
+| **Residual** | | | **0** | 0% |
+
+(R$ milhões.) EBIT cai R$ 52,1 bi, residual **exatamente zero**, fidelidade
+`exact`. 24 testes cobrem a matriz: membro ausente, membro novo, membro
+encerrado, escopo incompatível, período incompatível, moeda mista, residual
+não-zero e mapeamento que pega a linha errada.
+
+---
+
+## Decisão arquitetural — por que o eixo SEGMENT permanece bloqueado
+
+Decisão tomada em M5.2 e **aprovada**. Registrada aqui porque o comportamento
+que ela produz (`NO_BREAKDOWN_SOURCE`) é fácil de confundir com uma lacuna a ser
+contornada, e não é: é o comportamento correto.
+
+### 1. A DFP da CVM não publica o eixo de segmento
+
+Verificado sobre o ZIP real: `dfp_cia_aberta_2023.zip` contém 19 membros — as
+demonstrações padronizadas (BPA, BPP, DFC_MD, DFC_MI, DMPL, DRA, DRE, DVA, nas
+versões individual e consolidada), mais composição de capital e parecer. Nenhum
+deles tem dimensão de segmento operacional.
+
+A informação por segmento (IFRS 8) existe apenas nas **notas explicativas**, que
+a CVM publica dentro do documento de demonstrações financeiras completas — em
+PDF. Não há dataset estruturado equivalente.
+
+### 2. PDF textual não é fonte quantitativa estruturada
+
+Amostrado contra o corpus real da Petrobras já ingerido em M5.1. A extração de
+tabelas é **irregular**, e a irregularidade é o problema:
+
+- Algumas tabelas saem linearizadas e legíveis:
+  `Exploração e Produção  2.472 2.040 21,2`
+- Outras saem com o cabeçalho desmontado em fragmentos, em blocos separados dos
+  valores: `Exploração e / Produção / (E&P) / Refino, / Transporte e / …`, com os
+  números em outro bloco.
+
+Reconstruir qual número pertence a qual segmento a partir desse texto achatado é
+**dedução por formato** — exatamente o mesmo erro que casar conta por rótulo, que
+a Fase 2 existe para impedir. Um parser que acertasse na primeira tabela e
+associasse errado na segunda produziria fatos financeiros incorretos com
+aparência de corretos: erro intermitente, a pior classe.
+
+### 3. Isso preserva o invariante da M5.1
+
+M5.1 estabeleceu e testa que **texto de documento não tem caminho até o gold**
+(`test_o_texto_de_documento_nao_tem_caminho_ate_o_gold`). Autorizar um parser de
+tabela de PDF para alimentar fatos de segmento reverteria esse invariante um
+milestone depois de o commitar. A decisão aprovada é **não reverter**.
+
+Número lido de documento continua sendo citação (`QuoteClaim`) — pode aparecer
+num relatório, atribuído a quem publicou, resolvendo até o byte — e nunca insumo
+de cálculo.
+
+### 4. O que acontece hoje, e quando destrava
+
+`BreakdownAxis.SEGMENT` existe no vocabulário e **recusa** com
+`NO_BREAKDOWN_SOURCE`, cuja mensagem diz que o plano padronizado não publica a
+dimensão e que a nota que a contém é PDF. A recusa distingue deliberadamente:
+
+- **"o sistema não tem por onde ler"** (o que é o caso), de
+- **"a empresa não reporta"** (o que seria falso — ela reporta, em PDF).
+
+São ações diferentes para quem pesquisa, e colapsá-las numa lista vazia seria a
+ausência que se lê como evidência de ausência.
+
+**SEGMENT é retomado em M5.6**, com fonte estruturada apropriada: SEC/XBRL,
+onde as dimensões de segmento são elementos de taxonomia com valor tipado — e a
+Petrobras arquiva 20-F. Aí o eixo ganha membros mapeados por declaração, na mesma
+disciplina de `equivalence_basis`, e o executor de decomposição já construído
+funciona sem alteração: ele é agnóstico de eixo por construção.
 
 ## M5.3 — `ResearchProgram` e planner em dois estágios (planejado)
 
@@ -184,4 +311,7 @@ corrige, não reescreve. Sem loop writer↔critic. Workspace com estados
 
 ## M5.6 — SEC / US GAAP (planejado)
 
-Só depois que a Petrobras funcionar de ponta a ponta.
+Só depois que a Petrobras funcionar de ponta a ponta. Absorve também o
+desbloqueio do eixo `SEGMENT`, pela decisão registrada acima: XBRL traz as
+dimensões de segmento como elementos de taxonomia com valor tipado, que é a
+fonte estruturada que a CVM não oferece.

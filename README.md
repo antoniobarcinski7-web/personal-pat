@@ -6,14 +6,15 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5, Milestone 5.1.** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5, Milestone 5.2.** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
-com citações, com planner e writer atrás de um Protocol) e o primeiro corpus
-qualitativo: documentos da CVM extraídos, indexados e citáveis verbatim, com
+com citações, com planner e writer atrás de um Protocol), o primeiro corpus
+qualitativo — documentos da CVM extraídos, indexados e citáveis verbatim, com
 `published_at ≤ as_of` garantido por construção e nenhum modelo no caminho da
-evidência.
+evidência — e a decomposição quantitativa, que abre a variação de um total nas
+partes que a produziram, com residual explícito.
 
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
@@ -391,6 +392,77 @@ mora em `research_run` e `llm_call`.
 
 ---
 
+## Decomposição (L3) — Fase 5, M5.2
+
+`delta_pct` diz *quanto* mudou. A decomposição diz *de onde* a mudança veio:
+
+```
+delta_total = contribuição_A + contribuição_B + … + residual
+```
+
+É o primeiro passo de toda resposta causal, e ele é **quantitativo**. Um sistema
+que pula direto para "o release diz que foi o Brent" está fazendo jornalismo, não
+research — a citação explica a decomposição, nunca a substitui.
+
+```bash
+pat decompositions          # as identidades declaradas, e seus termos
+pat decompose ebit_by_line@v1 --cod-cvm 9512 \
+    --from 2023-12-31 --to 2024-12-31 --as-of 2025-06-30
+```
+
+Petrobras, FY2023 → FY2024 consolidado — EBIT cai R$ 52,1 bi:
+
+| | de | para | efeito | parte |
+|---|---|---|---|---|
+| Despesas operacionais líquidas | 80.591 | 109.261 | −28.670 | 55,0% |
+| Receita líquida | 511.994 | 490.829 | −21.165 | 40,6% |
+| Custo dos bens e serviços | 242.061 | 244.367 | −2.306 | 4,4% |
+| **Residual (não explicado)** | | | **0** | 0% |
+
+(R$ milhões, fidelidade `exact`.)
+
+### O residual é o ponto do desenho
+
+`contribuições + residual == target_delta` é **exata**, em `Decimal`, conferida
+na construção do contrato. Não existe forma de montar um `DecompositionResult`
+cujas partes não somem o todo. A tolerância decide se a decomposição sai marcada
+como **fechada** — nunca se ela pode existir.
+
+O residual é impresso **sempre**, inclusive quando é zero: um relatório que só o
+mostra quando incomoda ensina o leitor a não procurar por ele. E ele nunca é
+rateado entre os membros, estimado por regressão ou normalizado para somar 100% —
+cada uma dessas faria a conta fechar sem que ela feche, com a aparência exata de
+uma análise correta.
+
+Na prática, o residual é o que transforma um binding errado — que sairia como um
+número plausível — em algo que se vê na tela.
+
+**Membro presente em um só período recusa**, nunca vira zero. Uma companhia que
+deixou de reportar um componente não contribuiu com "menos o valor inteiro do ano
+passado"; ela mudou de apresentação, e as duas coisas se pareceriam idênticas no
+gráfico.
+
+### O eixo SEGMENT está bloqueado, e isso é o comportamento certo
+
+`BreakdownAxis.SEGMENT` existe no vocabulário e recusa com
+`NO_BREAKDOWN_SOURCE`. A DFP da CVM não publica segmento: o ZIP tem as
+demonstrações padronizadas e nada mais. Segmento (IFRS 8) vive nas notas
+explicativas, em PDF — e reconstruir qual número pertence a qual segmento a
+partir de texto achatado é dedução por formato, o mesmo erro de casar conta por
+rótulo.
+
+Autorizar isso reverteria o invariante da M5.1 de que **texto de documento não
+tem caminho até o gold**. A decisão registrada em `docs/phase5_proposal.md` é não
+reverter: número de documento continua sendo citação, nunca insumo. O eixo é
+retomado na M5.6, com SEC/XBRL, onde a dimensão de segmento é elemento de
+taxonomia com valor tipado.
+
+A recusa distingue "o sistema não tem por onde ler" de "a empresa não reporta" —
+são ações diferentes para quem pesquisa, e colapsá-las numa lista vazia seria a
+ausência que se lê como evidência de ausência.
+
+---
+
 ## Corpus qualitativo (L1.5) — Fase 5, M5.1
 
 O lado textual, construído com a mesma disciplina do lado numérico. Nenhum
@@ -557,9 +629,11 @@ src/pat/
 │   ├── research.py    ResearchPlan, PlanStep, ComputationResult, Claim, manifesto
 │   │                  ← nenhum passo de plano aceita Decimal: número literal é
 │   │                    inexprimível na gramática, não apenas proibido
-│   └── corpus.py      SourceDocument, DocumentUnit, QuoteClaim, EvidenceQuery
-│                      ← QuoteClaim não aceita Decimal, value, unit nem currency:
-│                        número de emissor é citação, jamais insumo de cálculo
+│   ├── corpus.py      SourceDocument, DocumentUnit, QuoteClaim, EvidenceQuery
+│   │                  ← QuoteClaim não aceita Decimal, value, unit nem currency:
+│   │                    número de emissor é citação, jamais insumo de cálculo
+│   └── decomposition.py  Contribution, DecompositionResult — as partes somam o
+│                      todo por construção; o residual nunca é opcional
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
@@ -577,6 +651,7 @@ src/pat/
 │   └── db.py          conexão e esquema
 ├── semantics/       L2 — conceitos universais, mapeamentos por regime, métricas
 │   ├── concepts.py    catálogo universal; não menciona plano de contas
+│   ├── decompositions.py  identidades contábeis declaradas, universais e versionadas
 │   ├── definitions/   uma métrica por módulo, versionada; proibido importar frameworks/
 │   ├── mappings/br/   dados TOML: família CVM + um arquivo por empresa
 │   ├── loader.py      TOML → Mapping, herança, sha256 da cadeia
@@ -587,6 +662,7 @@ src/pat/
 │   └── frameworks/cvm_dfp/   único lugar que conhece cd_conta e cod_cvm
 ├── research/        L3 — plano declarativo → resultado auditável. Sem LLM ainda.
 │   ├── canonical.py   JSON canônico + sha256: uma identidade, uma implementação
+│   ├── decompose.py   variação de um total → contribuições + residual explícito
 │   ├── capability.py  o que o sistema sabe fazer; jamais um valor financeiro
 │   ├── validate.py    validação pura: sem banco, sem relógio, sem rede
 │   ├── resolve.py     o que só o warehouse sabe responder
@@ -628,7 +704,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | Company Research Workspace: corpus qualitativo, decomposição por segmento, programa de pesquisa, grafo de claims, critic | `pat evidence` devolve trecho verbatim com procedência até o byte, e `as_of` diferentes divergem | 🚧 M5.1 |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat evidence` devolve trecho verbatim com procedência até o byte; `pat decompose` abre a variação com residual explícito | 🚧 M5.1–M5.2 |
 | **6** | B3 (preços, proventos), BCB, IBGE | | |
 | **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 
