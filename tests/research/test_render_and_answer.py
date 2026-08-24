@@ -77,6 +77,64 @@ def test_a_citacao_carrega_result_id_e_o_significado_sem_o_valor():
     assert "1136" not in claim.means, "o rotulo nao pode conter o numero"
 
 
+def test_a_descricao_nomeia_a_companhia():
+    """M4.1: sem o nome, uma comparacao entre empresas produz descricoes
+    identicas.
+
+    Tres empresas, mesma metrica, mesmo periodo, mesmo escopo: ate o M4.1 o
+    escritor recebia TRES `means` iguais e a unica coisa que o deixava atribuir
+    cada numero a cada empresa era o `step_id` escolhido pelo planejador. Um
+    sistema que so acerta porque o modelo escolheu bons nomes nao tem a
+    propriedade - tem sorte. Este teste e o que impede a linha de voltar.
+    """
+    from pat.research.render import describe
+
+    petro = _result(
+        make_metric_result(
+            entity_id="br:cnpj:33000167000101",
+            display_name="PETROLEO BRASILEIRO S.A. PETROBRAS",
+        )
+    )
+    weg = _result(
+        make_metric_result(
+            entity_id="br:cnpj:84429695000111", display_name="WEG S.A."
+        )
+    )
+
+    assert "PETROLEO BRASILEIRO S.A. PETROBRAS" in describe(petro)
+    assert "WEG S.A." in describe(weg)
+    assert describe(petro) != describe(weg), (
+        "duas empresas com a mesma metrica no mesmo periodo continuam "
+        "indistinguiveis para o escritor"
+    )
+
+
+def test_sem_display_name_a_descricao_cai_para_o_entity_id():
+    """Nunca uma descricao sem dono. `display_name` e opcional em
+    `MetricResult`; `entity_id` nao e."""
+    from pat.research.render import describe
+
+    resultado = _result(
+        make_metric_result(entity_id="br:cnpj:84429695000111", display_name=None)
+    )
+    assert "br:cnpj:84429695000111" in describe(resultado)
+
+
+def test_a_descricao_continua_sem_valor_nenhum():
+    """A regra que a mudanca do M4.1 nao podia arranhar: razao social e nome,
+    nao grandeza. O escritor monta o prompt com `describe()` e nao pode ganhar
+    um numero por essa porta."""
+    from pat.research.render import describe
+
+    resultado = _result(
+        make_metric_result(
+            value=Decimal("1136000000"), display_name="WEG S.A."
+        )
+    )
+    assert "1136" not in describe(resultado)
+    assert "1.14" not in describe(resultado)
+
+
 # -- regra do digito ---------------------------------------------------------
 
 

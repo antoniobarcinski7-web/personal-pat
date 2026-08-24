@@ -43,6 +43,7 @@ from enum import StrEnum
 
 from pydantic import ValidationError
 
+from pat.contracts.chat import ConversationContext
 from pat.contracts.research import (
     CapabilitySnapshot,
     PlanProvenance,
@@ -176,6 +177,47 @@ isso em "unresolved" em vez de aproximar:
 Um plano com "unresolved" nao vazio nao sera executado, e isso e o \
 comportamento correto: e melhor devolver a duvida do que devolver um numero \
 que responde a outra pergunta. Nao preencha lacuna com suposicao.
+
+Ao recusar, "steps" e "outputs" PODEM ser listas vazias. Nao invente um passo \
+so para preencher o formato: um passo que nao serve a pergunta e ruido no \
+plano e vira um numero que ninguem pediu. Recuse limpo.
+
+Use "candidates" para dizer o que voce CONSEGUIRIA planejar no lugar - sao as \
+opcoes que o usuario vai escolher para desambiguar, entao escreva cada uma \
+como uma pergunta concreta e planejavel, nao como categoria vaga.
+
+CONVERSA
+Voce pode receber um bloco "CONVERSA ATE AQUI" com os turnos anteriores desta \
+conversa. Ele existe para UMA coisa: resolver referencias da pergunta atual \
+("isso", "as tres empresas", "e a margem?", "desde 2023").
+
+O bloco contem apenas ESTRUTURA - que empresas, que metricas, que periodos e \
+que escopo foram planejados antes, e se o turno foi respondido ou recusado. \
+Ele NAO contem valores, e isso e deliberado: os numeros de todo turno sao \
+recalculados do zero pelo motor. Nao afirme, nao repita e nao pressuponha \
+nenhum valor de turno anterior.
+
+Quando a pergunta atual ACRESCENTA um periodo ("desde 2023", "e em 2022?"), \
+planeje os passos dos DOIS periodos - o novo e os que ja estavam em jogo. \
+Herdar contexto nao e herdar limite.
+
+Se um turno anterior foi recusado, o codigo da recusa esta ali. Nao replaneje \
+a mesma coisa que ja foi recusada pelo mesmo motivo.
+
+A pergunta atual continua sendo a pergunta. O contexto ajuda a entende-la; \
+nao a substitui, nao a amplia e nao a reinterpreta.
+
+ATRIBUICAO
+As derivacoes "min" e "max" produzem o VALOR extremo, nunca QUAL insumo o \
+produziu. Uma pergunta do tipo "qual empresa teve a maior queda", "quem \
+cresceu mais" ou "qual foi o melhor" NAO e respondivel por elas: o plano \
+devolveria um numero correto para uma pergunta que ninguem fez.
+
+Nesse caso use "unresolved" com kind "unsupported_question", dizendo em \
+"detail" que identificar o extremo exige uma operacao de argmin/argmax que \
+nao existe nesta versao, e liste em "candidates" as perguntas que VOCE \
+conseguiria planejar no lugar - por exemplo, a variacao de cada empresa \
+separadamente, para o leitor comparar.
 """
 
 
@@ -241,13 +283,29 @@ def _snapshot_payload(snapshot: CapabilitySnapshot) -> dict:
     }
 
 
-def build_user_prompt(question: ResearchQuestion, snapshot: CapabilitySnapshot) -> str:
-    """Pergunta + capacidades, em forma estavel.
+def build_user_prompt(
+    question: ResearchQuestion,
+    snapshot: CapabilitySnapshot,
+    context: ConversationContext | None = None,
+) -> str:
+    """Pergunta + capacidades (+ conversa, quando houver), em forma estavel.
 
     A serializacao passa pela canonicalizacao do projeto - chaves ordenadas,
     sem espaco, `Decimal` como string. Nada de `repr()`: a representacao
     padrao de um objeto Python nao promete estabilidade entre versoes, e um
     prompt que muda sozinho e um cache que nunca acerta.
+
+    `context=None` produz o prompt de sempre, BYTE A BYTE. Nao e detalhe de
+    implementacao: e a evidencia de que o M4.1 nao mexeu no caminho de quem
+    pergunta uma vez so. `pat plan` e o primeiro turno de uma conversa tem que
+    ser a mesma chamada, com o mesmo `prompt_sha256`, ou o cache existente
+    inteiro vira MISS e a afirmacao "a conversa e uma casca" deixa de ser
+    conferivel. Ha teste de hash congelado exigindo isso.
+
+    O bloco de conversa carrega ESTRUTURA e nada mais - que empresas, que
+    metricas, que periodos, e se o turno anterior foi recusado. Nenhum valor
+    passa por aqui, e isso e propriedade do tipo e nao do cuidado de quem
+    escreveu: `ConversationContext` nao tem campo que aceite `Decimal`.
     """
     pergunta = {
         "text": question.text,
@@ -258,11 +316,18 @@ def build_user_prompt(question: ResearchQuestion, snapshot: CapabilitySnapshot) 
         "pinned_scope": question.pinned_scope,
         "constraints": question.constraints,
     }
-    return (
+    prompt = (
         "PERGUNTA\n"
         f"{canonical_bytes(pergunta).decode('utf-8')}\n\n"
         "CAPACIDADES DISPONIVEIS\n"
         f"{canonical_bytes(_snapshot_payload(snapshot)).decode('utf-8')}\n"
+    )
+    if context is None:
+        return prompt
+    return (
+        f"{prompt}\n"
+        "CONVERSA ATE AQUI\n"
+        f"{canonical_bytes(context).decode('utf-8')}\n"
     )
 
 
@@ -274,6 +339,7 @@ def build_request(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: Decimal | None = DEFAULT_TEMPERATURE,
     timeout_s: int = DEFAULT_TIMEOUT_S,
+    context: ConversationContext | None = None,
 ) -> LLMRequest:
     """Monta a chamada. Separado de `plan_question` para poder ser inspecionado
     - e hasheado - sem chamar modelo nenhum.
@@ -283,7 +349,7 @@ def build_request(
     """
     return LLMRequest(
         system=SYSTEM_PROMPT,
-        user=build_user_prompt(question, snapshot),
+        user=build_user_prompt(question, snapshot, context),
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -360,6 +426,7 @@ def plan_question(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: Decimal | None = DEFAULT_TEMPERATURE,
     timeout_s: int = DEFAULT_TIMEOUT_S,
+    context: ConversationContext | None = None,
 ) -> PlannerOutcome:
     """Uma pergunta, uma chamada, um plano - ou um erro nomeado.
 
@@ -379,6 +446,7 @@ def plan_question(
         max_tokens=max_tokens,
         temperature=temperature,
         timeout_s=timeout_s,
+        context=context,
     )
 
     response = llm.complete(request)  # uma chamada, sem laco e sem retentativa

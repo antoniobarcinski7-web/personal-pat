@@ -206,3 +206,141 @@ def test_toda_aproximacao_do_repositorio_explica_como_diverge():
                 assert binding.divergence_note.strip(), (
                     f"{mapping.mapping_id}/{binding.concept_id} aproxima sem dizer como"
                 )
+
+
+# -- confirmacao exige conteudo (R-2) ----------------------------------------
+
+
+_SEM_BINDING = """
+mapping_id = "br:cnpj:12345678000199"
+mapping_version = "v1"
+framework = "ifrs_cpc_br"
+taxonomy = "cvm.plano_padronizado"
+jurisdiction = "BR"
+source = "cvm.dfp"
+parent = "cvm.plano_padronizado/nao_financeiro"
+entity_id = "br:cnpj:12345678000199"
+"""
+
+
+def test_mapeamento_de_empresa_sem_binding_e_recusado_no_load():
+    """O arquivo-carimbo: so entity_id e parent, nenhuma linha conferida.
+
+    Se ele carregasse, a cadeia sairia `confirmed=True` e `mapping_confirmed`
+    passaria a significar "alguem criou um arquivo" em vez de "alguem
+    conferiu" - que e o unico significado que sustenta publicar um numero.
+    """
+    with pytest.raises(MappingError, match="sem nenhum binding"):
+        parse_mapping(_SEM_BINDING.encode(), where="carimbo.toml")
+
+
+def test_familia_sem_binding_continua_valida():
+    """A restricao e de mapeamento de EMPRESA. Uma familia intermediaria sem
+    binding proprio e legitima: ela existe para ser herdada."""
+    familia = _SEM_BINDING.replace('entity_id = "br:cnpj:12345678000199"\n', "")
+    mapping = parse_mapping(familia.encode(), where="familia.toml")
+    assert mapping.entity_id is None
+    assert mapping.bindings == ()
+
+
+def test_empresa_sem_binding_nao_consegue_confirmar_a_cadeia(tmp_path):
+    """A prova pelo caminho de producao: com o arquivo-carimbo em disco, o
+    `load_dir` inteiro falha - a empresa nao passa a ser confirmada por
+    acidente, e o erro aponta o arquivo."""
+    import shutil
+
+    destino = tmp_path / "mappings"
+    shutil.copytree(MAPPINGS_DIR, destino)
+    (destino / "br" / "carimbo.toml").write_text(_SEM_BINDING, encoding="utf-8")
+
+    with pytest.raises(MappingError, match="sem nenhum binding"):
+        load_dir(destino)
+
+
+def test_mapeamento_de_empresa_com_um_binding_continua_confirmando(tmp_path):
+    """O contraponto: um binding basta, e e o que o GPA ja faz. A correcao nao
+    endureceu o fluxo por projeto - so proibiu o arquivo vazio."""
+    import shutil
+
+    destino = tmp_path / "mappings"
+    shutil.copytree(MAPPINGS_DIR, destino)
+    (destino / "br" / "minimo.toml").write_text(
+        _SEM_BINDING
+        + """
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity = "exact"
+equivalence_basis = "linha de reversao de D&A no fluxo de caixa indireto"
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta = "6.01.01.04"
+sign = 1
+""",
+        encoding="utf-8",
+    )
+
+    chain = load_dir(destino).resolve("br:cnpj:12345678000199", source="cvm.dfp")
+    assert chain.confirmed is True
+
+
+# -- todo mapeamento de empresa versionado no repositorio --------------------
+
+
+def _empresas_do_repositorio():
+    return [m for m in load_dir(MAPPINGS_DIR).all() if m.entity_id]
+
+
+@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+def test_mapeamento_de_empresa_declara_o_que_conferiu(mapping):
+    """`mapping_confirmed=True` e uma afirmacao sobre um humano, nao sobre um
+    arquivo. O minimo que o arquivo tem que carregar e quem conferiu, contra o
+    que, e por que cada linha e aquele conceito."""
+    assert mapping.verified_by, mapping.mapping_id
+    assert mapping.verified_against, mapping.mapping_id
+    assert mapping.bindings, mapping.mapping_id
+    for binding in mapping.bindings:
+        assert binding.equivalence_basis.strip(), (mapping.mapping_id, binding.concept_id)
+        for line in binding.lines:
+            assert line.address.label_as_reported, (mapping.mapping_id, binding.concept_id)
+
+
+@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+def test_mapeamento_de_empresa_herda_a_familia_e_e_confirmado(mapping):
+    conjunto = load_dir(MAPPINGS_DIR)
+    chain = conjunto.resolve(mapping.entity_id, source=mapping.source)
+
+    assert chain.confirmed is True
+    assert chain.head.mapping_id == mapping.mapping_id
+    # A familia continua no fim da cadeia: o arquivo da empresa sobrescreve o
+    # que diverge, nunca substitui o plano inteiro.
+    assert chain.chain[-1].is_default_for_source
+    # E o que ele nao sobrescreve continua vindo de la.
+    _, dono = chain.binding_for(concepts.REVENUE_NET)
+    assert dono.is_default_for_source
+
+
+@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+def test_override_de_d_and_a_aponta_para_o_fluxo_de_caixa(mapping):
+    """Hoje o unico motivo de existir arquivo de empresa e a D&A do resultado,
+    que a familia so aproxima pela DVA. Se um mapeamento de empresa sobrescrever
+    d_and_a_pnl, tem que ser para uma linha do DFC e com fidelidade exata -
+    apontar de volta para a DVA seria trocar seis por meia duzia e mentir sobre
+    a fidelidade."""
+    binding = mapping.binding_for(concepts.D_AND_A_PNL)
+    if binding is None:
+        pytest.skip(f"{mapping.mapping_id} nao sobrescreve d_and_a_pnl")
+
+    assert binding.fidelity is Fidelity.EXACT
+    for line in binding.lines:
+        assert line.address.as_str().find("DFC_MI") != -1, line.address.as_str()
+
+
+def test_cada_empresa_tem_uma_cadeia_com_hash_proprio():
+    """Duas empresas herdando a mesma familia nao podem colidir no
+    `mapping_sha256`: e ele que distingue a procedencia de dois resultados."""
+    conjunto = load_dir(MAPPINGS_DIR)
+    empresas = _empresas_do_repositorio()
+    hashes = {
+        m.mapping_id: conjunto.resolve(m.entity_id, source=m.source).sha256 for m in empresas
+    }
+    assert len(set(hashes.values())) == len(empresas), hashes

@@ -25,7 +25,7 @@ from pat.contracts.research import (
 )
 from pat.contracts.semantics import MetricRef, ReportingScope
 from pat.research.canonical import question_id
-from pat.research.validate import PlanNotExecutable, certify, validate_plan
+from pat.research.validate import PlanNotExecutable, certify, plan_limits, validate_plan
 from tests.research.conftest import make_plan, make_question
 from tests.semantics import golden_gpa as gpa
 
@@ -278,3 +278,71 @@ def test_executor_so_aceita_plano_certificado(question):
     plano = make_plan(question)
     with pytest.raises(AttributeError):
         execute_plan(plano, engine=None)
+
+
+# -- limite de entidades (R-6) -----------------------------------------------
+#
+# `max_entities` viaja no snapshot e o prompt do planejador o anuncia. Estes
+# tres testes existem para que ele seja cobrado, e nao apenas pedido.
+
+
+def _entidade(n: int) -> str:
+    return f"br:cnpj:{n:014d}"
+
+
+def _plano_com_entidades(question, quantas: int):
+    passos = tuple(
+        MetricStep(
+            step_id=f"m{i}",
+            metric=MetricRef.parse("margem_ebitda@v1"),
+            entity_id=_entidade(i + 1),
+            period_end=gpa.FY2023,
+        )
+        for i in range(quantas)
+    )
+    return make_plan(question, steps=passos, outputs=("m0",))
+
+
+def test_abaixo_do_limite_de_entidades_passa(question, registry):
+    limite = plan_limits().max_entities
+    plano = _plano_com_entidades(question, limite - 1)
+    assert ViolationCode.PLAN_TOO_LARGE not in _codes(plano, question, registry)
+
+
+def test_exatamente_no_limite_de_entidades_passa(question, registry):
+    """O limite e inclusivo. Um off-by-one aqui recusaria plano legitimo."""
+    limite = plan_limits().max_entities
+    plano = _plano_com_entidades(question, limite)
+    assert ViolationCode.PLAN_TOO_LARGE not in _codes(plano, question, registry)
+
+
+def test_acima_do_limite_de_entidades_e_recusado(question, registry):
+    limite = plan_limits().max_entities
+    plano = _plano_com_entidades(question, limite + 1)
+    violacoes = [
+        v
+        for v in validate_plan(plano, question, registry)
+        if v.code is ViolationCode.PLAN_TOO_LARGE
+    ]
+
+    assert violacoes, "plano acima do limite de entidades executou"
+    # A mensagem nomeia as empresas: quem for dividir o plano precisa saber
+    # quais sao, e nao so que sao demais.
+    assert str(limite + 1) in violacoes[0].message
+    assert _entidade(1) in violacoes[0].message
+
+
+def test_muitos_passos_da_mesma_empresa_nao_disparam_o_limite_de_entidades(question, registry):
+    """O limite conta empresas distintas, nao passos. Uma serie temporal longa
+    de uma empresa so pode esbarrar em `max_steps`."""
+    passos = tuple(
+        MetricStep(
+            step_id=f"m{i}",
+            metric=MetricRef.parse("margem_ebitda@v1"),
+            entity_id=gpa.ENTITY_ID,
+            period_end=gpa.FY2023,
+        )
+        for i in range(plan_limits().max_entities + 3)
+    )
+    plano = make_plan(question, steps=passos, outputs=("m0",))
+    assert ViolationCode.PLAN_TOO_LARGE not in _codes(plano, question, registry)

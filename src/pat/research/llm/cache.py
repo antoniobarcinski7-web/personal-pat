@@ -40,7 +40,14 @@ Existe para que uma mudanca futura na composicao da chave invalide o cache de
 propria vontade, em vez de fazer entradas velhas e novas coabitarem sob chaves
 que significam coisas diferentes."""
 
-__all__ = ["CALL_VERSION", "CachedLLMClient", "InMemoryLLMCache", "LLMCache", "call_sha256"]
+__all__ = [
+    "CALL_VERSION",
+    "CachedLLMClient",
+    "InMemoryLLMCache",
+    "LLMCache",
+    "call_sha256",
+    "call_sha256_of",
+]
 
 
 def call_sha256(request: LLMRequest, client_fingerprint: str) -> str:
@@ -54,10 +61,24 @@ def call_sha256(request: LLMRequest, client_fingerprint: str) -> str:
     (procedencia, nao pedido) e o `model_id` resolvido (e resultado da chamada;
     inclui-lo seria circular).
     """
+    return call_sha256_of(request.prompt_sha256, client_fingerprint)
+
+
+def call_sha256_of(prompt_sha256: str, client_fingerprint: str) -> str:
+    """A mesma identidade, a partir das duas coisas que a compoem.
+
+    Existe porque quem ja fez a chamada tem `prompt_sha256` em maos (ele esta
+    em `PlanProvenance`) e nao deveria precisar remontar o `LLMRequest` inteiro
+    - com o snapshot junto - so para recalcular a chave. Remontar seria um
+    segundo caminho ate o mesmo valor, e o dia em que os dois divergissem o
+    sintoma seria uma chamada indexada sob uma chave que nao existe no cache.
+
+    A aritmetica do hash mora aqui e so aqui; `call_sha256` delega.
+    """
     return sha256_of(
         {
             "call_version": CALL_VERSION,
-            "prompt_sha256": request.prompt_sha256,
+            "prompt_sha256": prompt_sha256,
             "client_fingerprint": client_fingerprint,
         }
     )

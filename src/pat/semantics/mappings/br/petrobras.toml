@@ -1,0 +1,54 @@
+# Petrobras - Petroleo Brasileiro S.A. (cod_cvm 9512).
+#
+# Conferido contra a DFP 2023 (doc 135086 v2, recebido em 2024-03-25) e a DFP
+# 2024 (doc 145077 v1, 2025-02-26), ambas ja no bronze. A linha foi escolhida
+# lendo `pat accounts --cod-cvm 9512 --statement DFC_MI`; nao ha inferencia por
+# rotulo em lugar nenhum deste arquivo.
+
+mapping_id      = "br:cnpj:33000167000101"
+mapping_version = "v1"
+framework       = "ifrs_cpc_br"
+taxonomy        = "cvm.plano_padronizado"
+jurisdiction    = "BR"
+source          = "cvm.dfp"
+parent          = "cvm.plano_padronizado/nao_financeiro"
+entity_id       = "br:cnpj:33000167000101"
+
+verified_by      = "antonio.barcinski"
+verified_against = "DFP CVM 2023 e 2024, cod_cvm 9512, escopos consolidado e individual"
+
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+6.01.01.04 "Depreciação, depleção e amortização" e a linha de reversao de D&A na \
+conciliacao do fluxo de caixa indireto da Petrobras: parte do lucro liquido e \
+soma de volta a despesa que nao consumiu caixa. E, por definicao, a D&A que \
+passou pelo resultado do periodo - exatamente d_and_a_pnl, no lugar da \
+aproximacao pela DVA que a familia usa.
+
+Positiva na origem (e uma reversao somada ao lucro), ja na convencao do \
+conceito; sign=+1.
+
+A linha e limpa: a Petrobras publica impairment em conta separada (6.01.01.05, \
+"Perda, líquida, no valor de recuperação de ativos"), entao 6.01.01.04 nao \
+carrega perda por recuperabilidade junto.
+
+Este override paga por si num caso verificado. Na DFP 2023 como publicada \
+originalmente, o DFC trazia 66.204 MM e a DVA (7.04.01) trazia 76.020 MM - o \
+proprio documento divergia em 12,9% entre as duas demonstracoes. A DFP 2024 \
+reapresentou a DVA para 66.204 MM, alinhando-a ao DFC. Ou seja: quem lesse \
+FY2023 em junho/2024 pela familia default teria 76.020 MM, e por esta linha \
+teria 66.204 MM - que e o numero que a propria companhia veio a confirmar \
+depois. Conferido tambem em FY2024 (67.033 MM, identico a DVA ja \
+reapresentada) e FY2022 (68.202 MM).
+
+O codigo 6.01.01.04 e especifico da Petrobras. A numeracao das subcontas de \
+6.01.01 nao e estavel entre companhias - na Vale a mesma grandeza e 6.01.01.06 \
+e na WEG e 6.01.01.02 - e por isso esta linha nao pode subir para a familia.
+"""
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta  = "6.01.01.04"
+sign      = 1
+label_as_reported = "Depreciação, depleção e amortização"

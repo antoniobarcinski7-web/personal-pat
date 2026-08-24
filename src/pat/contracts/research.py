@@ -351,7 +351,25 @@ class UnresolvedItem(Frozen):
 
 
 class ResearchPlan(Frozen):
-    """O programa. Declarativo, fechado e conferivel inteiro antes de rodar."""
+    """O programa. Declarativo, fechado e conferivel inteiro antes de rodar.
+
+    Um plano ou CALCULA alguma coisa ou DEVOLVE uma duvida - e a gramatica
+    precisa saber expressar as duas.
+
+    Ate a M4.1 ela nao sabia: `steps` e `outputs` exigiam pelo menos um item, e
+    portanto recusar era impossivel de escrever. O planejador que quisesse dizer
+    "esta pergunta e ambigua" era obrigado a inventar um passo qualquer so para
+    o plano ser aceito, e quem fizesse a coisa certa - devolver `unresolved` com
+    zero passos - tinha a recusa rejeitada como violacao de contrato. O sintoma
+    chegava ao usuario como "o modelo nao produziu uma saida valida", que culpa
+    o modelo exatamente quando ele acertou, e joga fora os candidatos que ele
+    ofereceu para desambiguar.
+
+    A regra agora e condicional, e continua fechada nos dois lados: sem
+    `unresolved`, o plano tem que ter passo e saida (nao existe plano executavel
+    vazio); com `unresolved`, pode nao ter nenhum dos dois (uma duvida nao
+    calcula nada). O que nao pode e o meio-termo silencioso.
+    """
 
     plan_version: Literal["v1"] = "v1"
     question_id: Sha256
@@ -360,8 +378,8 @@ class ResearchPlan(Frozen):
     scope: ReportingScope = Field(
         description="Explicito, sem default. Um numero no escopo errado parece certo."
     )
-    steps: tuple[PlanStep, ...] = Field(min_length=1)
-    outputs: tuple[str, ...] = Field(min_length=1)
+    steps: tuple[PlanStep, ...] = ()
+    outputs: tuple[str, ...] = ()
     assumptions: tuple[str, ...] = ()
     unresolved: tuple[UnresolvedItem, ...] = ()
 
@@ -371,7 +389,34 @@ class ResearchPlan(Frozen):
         if len(ids) != len(set(ids)):
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             raise ValueError(f"step_id repetido: {dupes}")
+
+        # A condicao que substitui os dois `min_length=1`. Note que ela nao
+        # afrouxa nada para o plano que pretende executar: sem pendencia
+        # declarada, plano vazio continua sendo erro na fronteira de entrada, e
+        # nao tres camadas adiante como uma resposta sem numero.
+        if not self.unresolved:
+            if not self.steps:
+                raise ValueError(
+                    "plano sem passos e sem pendencia declarada: um plano ou calcula "
+                    "alguma coisa ou diz por que nao consegue. Para recusar, preencha "
+                    "`unresolved`."
+                )
+            if not self.outputs:
+                raise ValueError(
+                    "plano com passos e sem saidas: nada seria apresentado. Declare "
+                    "quais passos sao resposta, ou recuse por `unresolved`."
+                )
         return self
+
+    @property
+    def is_refusal(self) -> bool:
+        """Plano que devolve duvida em vez de calculo.
+
+        Existe para que quem le nao precise deduzir a intencao de um `steps`
+        vazio - deducao que, em dois lugares diferentes, viraria duas regras
+        diferentes.
+        """
+        return bool(self.unresolved) and not self.steps
 
     def step(self, step_id: str) -> PlanStep | None:
         for candidate in self.steps:

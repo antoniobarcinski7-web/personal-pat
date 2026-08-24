@@ -140,6 +140,19 @@ def validate_plan(
             )
         )
 
+    entidades = {step.entity_id for step in plan.steps if isinstance(step, MetricStep)}
+    if len(entidades) > plan_limits().max_entities:
+        # `max_entities` viaja no snapshot e o planejador o le; um limite que o
+        # prompt anuncia e o validador nao cobra e so um pedido educado.
+        out.append(
+            _v(
+                ViolationCode.PLAN_TOO_LARGE,
+                f"{len(entidades)} empresas no plano, acima do limite de "
+                f"{plan_limits().max_entities}: {', '.join(sorted(entidades))}",
+                remedy="dividir em planos menores; nao existe recorte parcial",
+            )
+        )
+
     if plan.unresolved:
         detalhes = "; ".join(f"{item.kind}: {item.detail}" for item in plan.unresolved)
         out.append(
