@@ -410,6 +410,121 @@ def cmd_provenance(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Fase 5 M5.2 - decomposicao quantitativa
+# ---------------------------------------------------------------------------
+
+
+def cmd_decompositions(args) -> int:
+    """As identidades declaradas. Nenhuma delas menciona plano de contas."""
+    from pat.semantics import decompositions
+
+    for definition in decompositions.all_definitions():
+        print(f"{definition.ref}  [eixo {definition.axis.value}]")
+        print(f"  {definition.definition}")
+        print(f"  alvo       {definition.target_concept}  ({definition.target_label})")
+        for term in definition.terms:
+            sinal = "+" if term.sign > 0 else "-"
+            print(f"    {sinal} {term.concept_id:<26} {term.label}")
+        print(f"  tolerancia {definition.tolerance_abs:,.0f} (residual acima disso: nao fecha)")
+        print(f"  porque     {' '.join(definition.rationale.split())}")
+        print()
+    return 0
+
+
+def cmd_decompose(args) -> int:
+    """Variacao de um total -> contribuicoes + residual. Sem modelo nenhum."""
+    from pat.contracts.decomposition import DecompositionUnavailable
+    from pat.research.decompose import decompose
+    from pat.semantics import build_engine
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        asof = AsOf(conn)
+        entity = _resolve_entity(asof, args)
+        if entity is None:
+            return 1
+        entity_id, denom = entity
+
+        result = decompose(
+            build_engine(conn),
+            args.decomposition,
+            entity_id=entity_id,
+            period_from=args.period_from,
+            period_to=args.period_to,
+            scope=_scope(args),
+            as_of=args.as_of,
+        )
+
+        if isinstance(result, DecompositionUnavailable):
+            print(f"{args.decomposition}: INDISPONIVEL", file=sys.stderr)
+            print(f"  motivo   {result.reason}", file=sys.stderr)
+            print(f"  {result.message}", file=sys.stderr)
+            if result.member_id:
+                print(f"  membro   {result.member_id}", file=sys.stderr)
+            if result.remedy:
+                print(f"  saida    {result.remedy}", file=sys.stderr)
+            return 1
+
+        _print_decomposition(result, denom)
+        return 0
+    finally:
+        conn.close()
+
+
+def _print_decomposition(result, denom: str) -> None:
+    escopo = "consolidado" if result.scope == "consolidated" else "individual"
+    print(f"{result.decomposition_id}@{result.decomposition_version}   [eixo {result.axis.value}]")
+    print(f"  empresa    {denom}  ({result.entity_id})")
+    print(f"  escopo     {escopo}   periodo {result.period_type}")
+    print(f"  AS OF      {result.as_of}   conhecido em {result.knowledge_date}")
+    print()
+
+    pct = (
+        f"  ({result.target_delta_pct * 100:+,.1f}%)"
+        if result.target_delta_pct is not None
+        else ""
+    )
+    print(f"{result.target_label}")
+    print(
+        f"  {result.period_from}  {result.target_from:>22,.2f} {result.currency}\n"
+        f"  {result.period_to}  {result.target_to:>22,.2f} {result.currency}\n"
+        f"  variacao    {result.target_delta:>22,.2f} {result.currency}{pct}"
+    )
+    print()
+    print(f"{'CONTRIBUICAO':<36} {'DE':>18} {'PARA':>18} {'EFEITO':>18}  PARTE")
+    for contribution in result.ranked():
+        share = f"{contribution.share * 100:>6,.1f}%" if contribution.share is not None else "     -"
+        print(
+            f"{contribution.member_label:<36} {contribution.value_from:>18,.0f} "
+            f"{contribution.value_to:>18,.0f} {contribution.contribution:>18,.0f} {share}"
+        )
+
+    # O residual sai SEMPRE, inclusive quando e zero. Um relatorio que so o
+    # mostra quando incomoda ensina o leitor a nao procurar por ele.
+    residual_share = (
+        f"{result.residual_share * 100:>6,.1f}%" if result.residual_share is not None else "     -"
+    )
+    marca = "" if result.closes else "   <-- NAO FECHA"
+    print(
+        f"{'RESIDUAL (nao explicado)':<36} {'':>18} {'':>18} "
+        f"{result.residual:>18,.0f} {residual_share}{marca}"
+    )
+    print()
+    print(f"  fidelidade {result.fidelity}")
+    if result.fidelity != "exact":
+        print("             ^ montada sobre binding aproximado; ver `pat mappings`")
+    print(f"  mapeamento {result.mapping_sha256[:12]}")
+    print(f"  tolerancia {result.tolerance_abs:,.0f}")
+    if not result.closes:
+        print(
+            "  O residual excede a tolerancia: as partes nao explicam o todo. "
+            "Isso e um ACHADO, nao um detalhe de arredondamento - normalmente "
+            "significa que os termos nao vieram da mesma cascata."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Fase 5 M5.1 - corpus qualitativo
 # ---------------------------------------------------------------------------
 
@@ -1726,6 +1841,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Sem `--host`: ver o cabecalho de `chat/http.py`.
     p_serve.set_defaults(func=cmd_serve)
+
+    # -- Fase 5 M5.2: decomposicao quantitativa ------------------------------
+    p_dec = sub.add_parser(
+        "decompositions", help="identidades contabeis declaradas, e seus termos"
+    )
+    p_dec.set_defaults(func=cmd_decompositions)
+
+    p_dc = sub.add_parser("decompose", help="abre a variacao de um total em contribuicoes")
+    p_dc.add_argument("decomposition", help="'nome@versao', ex. ebit_by_line@v1")
+    p_dc.add_argument("--cod-cvm", type=int, required=True)
+    p_dc.add_argument("--from", dest="period_from", type=date.fromisoformat, required=True)
+    p_dc.add_argument("--to", dest="period_to", type=date.fromisoformat, required=True)
+    p_dc.add_argument("--as-of", type=date.fromisoformat, required=True)
+    p_dc.add_argument("--individual", action="store_true", help="escopo individual")
+    p_dc.set_defaults(func=cmd_decompose)
 
     # -- Fase 5 M5.1: corpus qualitativo ------------------------------------
     p_docs = sub.add_parser("docs", help="documentos qualitativos de uma empresa")

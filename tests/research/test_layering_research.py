@@ -105,13 +105,45 @@ def test_so_a_raiz_de_composicao_constroi_o_motor():
 
 
 def test_so_o_executor_chama_o_motor():
-    """O motor chega ao executor por injecao - ele nem importa `pat.semantics.engine`.
+    """`engine.compute` mora num modulo so.
 
-    Isso e mais forte do que a regra pedia: o executor nao consegue construir
-    um motor, so usar o que lhe deram.
+    Continua valendo depois da M5.2: `decompose.py` fala com o motor, mas pela
+    porta de CONCEITO (`resolve_concept`), nao pela de metrica. Sao coisas
+    diferentes - uma decomposicao abre os termos de uma identidade contabil, e
+    esses termos nunca foram metricas registradas.
     """
     assert _files_containing(RESEARCH, "engine.compute") == {"execute.py"}
-    assert _files_importing(RESEARCH, ("pat.semantics.engine",)) == set()
+
+
+def test_nenhum_modulo_de_pesquisa_constroi_um_motor():
+    """O motor chega por injecao, sempre.
+
+    Esta e a regra que importa, e ela e mais forte do que "so um arquivo
+    importa `engine`": nenhum modulo de L3 consegue CONSTRUIR um motor, entao
+    nenhum deles escolhe sozinho contra que warehouse, que mapeamento ou que
+    fonte vai falar. Quem monta essa ligacao e a raiz de composicao.
+
+    Ate a M5.1 a regra era conferida como "ninguem importa
+    `pat.semantics.engine`", o que funcionava por acidente: nenhum modulo
+    precisava do TIPO. `decompose.py` precisa, para anotar o parametro que
+    recebe. Trocar a checagem pela construcao e o que mantem a intencao
+    original em vez da consequencia dela.
+    """
+    # `research/__init__.py` E a raiz de composicao desta camada: e nele que
+    # `run_plan` liga conexao, mapeamentos e registro num motor. A excecao e
+    # nominal, e nao um prefixo - um arquivo novo que quisesse o mesmo direito
+    # teria que ser acrescentado aqui, num diff que aparece.
+    RAIZ_DE_COMPOSICAO = {"__init__.py"}
+
+    for path in sorted(RESEARCH.rglob("*.py")):
+        if path.name in RAIZ_DE_COMPOSICAO and path.parent == RESEARCH:
+            continue
+        fonte = path.read_text(encoding="utf-8")
+        assert "build_engine" not in fonte, (
+            f"{path.name} constroi um motor. Ele tem que receber um pronto - "
+            "e a raiz de composicao que decide contra o que o sistema fala."
+        )
+        assert "Engine(" not in fonte, f"{path.name} instancia um Engine diretamente"
 
 
 def test_so_resolve_capability_e_a_raiz_tocam_a_camada_de_consulta():

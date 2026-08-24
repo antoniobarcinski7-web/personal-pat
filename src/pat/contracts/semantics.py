@@ -521,6 +521,25 @@ class MetricUnavailable(Frozen):
         raise MetricNotAvailableError(self)
 
 
+class ConceptUnavailable(Frozen):
+    """O analogo de `MetricUnavailable` um nivel abaixo.
+
+    Existe porque a decomposicao da Fase 5 le CONCEITOS, e nao metricas: os
+    termos de uma identidade contabil (`gross_profit`, `cogs`) nunca foram
+    metricas registradas, e promove-los a metrica so para poder le-los criaria
+    definicoes cujo unico proposito seria contornar a falta deste tipo.
+
+    Mesma disciplina de sempre: motivo nomeado, conceito que faltou, enderecos
+    tentados e o que fazer. Nunca zero, nunca parcial.
+    """
+
+    reason: UnavailableReason
+    message: str
+    concept_id: str
+    tried: tuple[str, ...] = Field(default=(), description="Enderecos tentados, legiveis")
+    remedy: str | None = None
+
+
 class MetricNotAvailableError(RuntimeError):
     def __init__(self, unavailable: MetricUnavailable) -> None:
         self.unavailable = unavailable

@@ -26,6 +26,7 @@ from decimal import Decimal
 from pat.contracts.common import PeriodType
 from pat.contracts.semantics import (
     CheckOutcome,
+    ConceptUnavailable,
     Dimension,
     Fidelity,
     InputRef,
@@ -107,6 +108,70 @@ class Engine:
         return self._compute(
             ref, entity_id=entity_id, period_end=period_end, scope=scope, as_of=as_of, cache=cache
         )
+
+    def resolve_concept(
+        self,
+        concept_id: str,
+        *,
+        entity_id: str,
+        period_end: date,
+        scope: ReportingScope,
+        as_of: date,
+    ) -> "ConceptValue | ConceptUnavailable":
+        """Resolve UM conceito, sem passar por metrica.
+
+        Existe para a decomposicao da Fase 5, que precisa dos termos de uma
+        identidade contabil - e nao do resultado dela. `compute` nao serve:
+        `gross_profit` e `cogs` sao conceitos, nao metricas registradas, e
+        promove-los a metrica so para poder le-los criaria cinco definicoes
+        cujo unico proposito seria contornar a falta desta porta.
+
+        A resolucao em si e a mesma de `_compute` - a mesma cadeia de
+        mapeamento, o mesmo resolver, o mesmo `as_of`. Duas implementacoes
+        divergiriam, e a mais permissiva deixaria passar o que a outra
+        recusaria.
+        """
+        chain = self._mappings.resolve(entity_id, source=self._source)
+        if chain is None:
+            return ConceptUnavailable(
+                reason=UnavailableReason.NO_MAPPING,
+                message=f"nenhum mapeamento cobre {entity_id} na fonte {self._source}",
+                concept_id=concept_id,
+                remedy=f"escreva src/pat/semantics/mappings/ para {entity_id}",
+            )
+
+        resolver = self._resolvers.get(chain.head.taxonomy)
+        if resolver is None:
+            return ConceptUnavailable(
+                reason=UnavailableReason.NO_MAPPING,
+                message=f"nenhum resolver registrado para a taxonomia {chain.head.taxonomy}",
+                concept_id=concept_id,
+            )
+
+        outcome = self._resolve_concept(
+            concept_id,
+            chain=chain,
+            resolver=resolver,
+            entity_id=entity_id,
+            period_end=period_end,
+            scope=scope,
+            as_of=as_of,
+        )
+        if isinstance(outcome, _ConceptFailure):
+            return ConceptUnavailable(
+                reason=outcome.reason,
+                message=outcome.message,
+                concept_id=outcome.concept_id,
+                tried=outcome.tried,
+                remedy=outcome.remedy,
+            )
+        return outcome
+
+    def mapping_chain_for(self, entity_id: str):
+        """A cadeia de mapeamento efetiva. A decomposicao precisa do sha256
+        dela pelo mesmo motivo que `MetricResult` precisa: editar a familia
+        muda o resultado sem tocar no arquivo da empresa."""
+        return self._mappings.resolve(entity_id, source=self._source)
 
     # -- interno ------------------------------------------------------------
 
