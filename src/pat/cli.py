@@ -56,6 +56,7 @@ from pat.config import resolve_paths
 from pat.contracts.common import RunStatus
 from pat.ingest import ingest_dataset
 from pat.query.asof import AsOf
+from pat.research import DEFAULT_SOURCE
 from pat.sources.base import SourceError
 from pat.sources.public.cvm import CVMProvider
 from pat.sources.registry import Registry
@@ -407,6 +408,258 @@ def cmd_provenance(args) -> int:
         return 1
     conn.close()
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Fase 5 M5.3 - programa de pesquisa
+# ---------------------------------------------------------------------------
+
+
+def cmd_program(args) -> int:
+    """Pergunta -> programa, em dois estagios. Nao executa nada.
+
+    Mesma disciplina de `pat plan`: o programa sai em disco, um humano le o
+    que o modelo escolheu investigar, e so entao `pat run-program` roda. A
+    diferenca e que aqui o estagio 1 EXECUTA o calculo - deterministicamente,
+    sem escrever nada - para que o estagio 2 possa ver a FORMA dos resultados
+    antes de escolher o que procurar no corpus. Sem isso ele planejaria a
+    busca no escuro, e "por que a receita caiu" viraria uma varredura por
+    palavras da pergunta.
+    """
+    from pathlib import Path
+
+    from pat.contracts.program import ProgramEnvelope
+    from pat.research.canonical import program_id as compute_program_id
+    from pat.research.capability import build_snapshot
+    from pat.research.llm import LLMError
+    from pat.research.llm.cache import call_sha256_of
+    from pat.research.planner import PlannerError
+    from pat.research.program import run_program
+    from pat.research.program_planner import plan_compute_stage, plan_evidence_stage
+    from pat.semantics import build_engine
+
+    question = _question_from_args(args)
+
+    try:
+        llm = _llm_client(args)
+    except LLMError as exc:
+        print(f"cliente de modelo indisponivel: {exc}", file=sys.stderr)
+        return 2
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+
+    provenances = []
+    try:
+        snapshot = build_snapshot(conn, source=DEFAULT_SOURCE)
+        capability = _capability_sha(snapshot)
+
+        try:
+            program, prov1 = plan_compute_stage(
+                question, snapshot, llm=llm, model=args.model, max_tokens=args.max_tokens
+            )
+            provenances.append(("compute", prov1))
+        except PlannerError as exc:
+            print(f"estagio 1 nao produziu um programa: {exc}", file=sys.stderr)
+            print(f"  resposta  {exc.response_sha256[:12]}", file=sys.stderr)
+            if exc.detail:
+                print(f"  trecho    {exc.detail[:200]}", file=sys.stderr)
+            return 1
+        except LLMError as exc:
+            print(f"chamada ao modelo falhou: {exc}", file=sys.stderr)
+            return 2
+
+        if program.is_refusal:
+            print("PROGRAMA RECUSADO")
+            for item in program.unresolved:
+                print(f"  {item.kind}: {item.detail}")
+                for candidato in item.candidates:
+                    print(f"    candidato: {candidato}")
+            return 1
+
+        # O estagio intermediario: executa o que ja da para executar, sem
+        # persistir, so para extrair a forma. Nao ha escrita nenhuma aqui.
+        parcial = run_program(
+            conn,
+            program,
+            engine=build_engine(conn, source=DEFAULT_SOURCE),
+            question=question,
+            program_id=compute_program_id(program),
+            capability_sha256=capability,
+        )
+
+        try:
+            program, prov2 = plan_evidence_stage(
+                question,
+                snapshot,
+                program,
+                parcial.shapes,
+                llm=llm,
+                model=args.model,
+                max_tokens=args.max_tokens,
+            )
+            provenances.append(("evidence", prov2))
+        except PlannerError as exc:
+            print(f"estagio 2 nao produziu buscas: {exc}", file=sys.stderr)
+            print(f"  resposta  {exc.response_sha256[:12]}", file=sys.stderr)
+            return 1
+        except LLMError as exc:
+            print(f"chamada ao modelo falhou: {exc}", file=sys.stderr)
+            return 2
+    finally:
+        conn.close()
+
+    for _papel, provenance in provenances:
+        _record_call(args, provenance, call_sha256=call_sha256_of(provenance.prompt_sha256, llm.fingerprint))
+
+    _print_program(program, compute_program_id(program))
+
+    if args.out:
+        envelope = ProgramEnvelope(
+            question=question,
+            program=program,
+            planner_compute=provenances[0][1],
+            planner_evidence=provenances[1][1] if len(provenances) > 1 else None,
+        )
+        Path(args.out).write_text(
+            envelope.model_dump_json(indent=2, exclude_none=True), encoding="utf-8"
+        )
+        print(f"\nprograma gravado em {args.out}")
+        print(f"Leia antes de executar:  pat run-program --program-file {args.out}")
+    return 0
+
+
+def _print_program(program, program_id: str) -> None:
+    print(f"PROGRAMA  {program_id[:12]}")
+    print(f"  objetivo   {program.objective}")
+    print(f"  AS OF      {program.as_of}   escopo {program.scope}")
+    for pergunta in program.questions_to_answer:
+        print(f"  pergunta   {pergunta}")
+
+    if program.compute is not None and program.compute.steps:
+        print(f"\nCALCULO ({len(program.compute.steps)} passo(s))")
+        for passo in program.compute.steps:
+            if passo.step_kind == "metric":
+                print(
+                    f"  {passo.step_id:<22} {passo.metric}  {passo.entity_id}  {passo.period_end}"
+                )
+            else:
+                print(f"  {passo.step_id:<22} {passo.op}({', '.join(passo.inputs)})")
+
+    if program.decompositions:
+        print(f"\nDECOMPOSICOES ({len(program.decompositions)})")
+        for pedido in program.decompositions:
+            print(
+                f"  {pedido.request_id:<22} {pedido.decomposition}  "
+                f"{pedido.period_from} -> {pedido.period_to}"
+            )
+
+    if program.evidence:
+        print(f"\nEVIDENCIA ({len(program.evidence)} busca(s))")
+        for pedido in program.evidence:
+            tipos = f"  [{', '.join(k.value for k in pedido.kinds)}]" if pedido.kinds else ""
+            print(f"  {pedido.request_id:<22} {' '.join(pedido.terms)}{tipos}")
+            print(f"    porque: {pedido.rationale}")
+
+
+def cmd_run_program(args) -> int:
+    """Executa um programa ja escrito. NENHUMA chamada de modelo.
+
+    O caminho determinístico completo: calculo, decomposicao e evidencia, os
+    tres a partir de um arquivo que um humano pode ler antes. E o que prova
+    que o resto nao depende do modelo.
+    """
+    from pathlib import Path
+
+    from pat.contracts.program import ProgramEnvelope
+    from pat.research.canonical import program_id as compute_program_id
+    from pat.research.capability import build_snapshot
+    from pat.research.program import run_program
+    from pat.semantics import build_engine
+
+    try:
+        envelope = ProgramEnvelope.model_validate_json(
+            Path(args.program_file).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        print(f"nao consegui ler o programa: {exc}", file=sys.stderr)
+        return 1
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        snapshot = build_snapshot(conn, source=DEFAULT_SOURCE)
+        result = run_program(
+            conn,
+            envelope.program,
+            engine=build_engine(conn, source=DEFAULT_SOURCE),
+            question=envelope.question,
+            program_id=compute_program_id(envelope.program),
+            capability_sha256=_capability_sha(snapshot),
+        )
+        _print_program_result(result, envelope.program)
+        return 0 if result.has_any_output else 1
+    finally:
+        conn.close()
+
+
+def _print_program_result(result, program) -> None:
+    from pat.research.render import describe, format_value
+
+    print(f"PROGRAMA  {result.program_id[:12]}   AS OF {result.as_of}")
+
+    if result.computations:
+        print(f"\nCALCULO ({len(result.computations)})")
+        for computation in result.computations:
+            print(f"  {computation.step_id:<22} {format_value(computation)}")
+            print(f"    {describe(computation)}")
+    for falha in result.computation_failures:
+        print(f"  {falha.step_id:<22} INDISPONIVEL ({falha.reason})")
+        print(f"    {falha.message}")
+
+    for outcome in result.decompositions:
+        print()
+        if outcome.unavailable is not None:
+            print(f"DECOMPOSICAO {outcome.request_id}: INDISPONIVEL")
+            print(f"  motivo   {outcome.unavailable.reason}")
+            print(f"  {outcome.unavailable.message}")
+            continue
+        _print_decomposition(outcome.result, outcome.result.entity_id)
+
+    for outcome in result.evidence:
+        print()
+        pedido = next(
+            (p for p in program.evidence if p.request_id == outcome.request_id), None
+        )
+        titulo = f"EVIDENCIA {outcome.request_id}"
+        if pedido is not None:
+            titulo += f"   ({' '.join(pedido.terms)})"
+        print(titulo)
+        if pedido is not None:
+            print(f"  porque: {pedido.rationale}")
+        if outcome.unavailable is not None:
+            print(f"  SEM EVIDENCIA ({outcome.unavailable.reason})")
+            print(f"  {outcome.unavailable.message}")
+            continue
+        for hit in outcome.result.hits:
+            quote = hit.quote
+            print(
+                f"  [{hit.rank}] {quote.published_at}  {quote.document_kind.value}  "
+                f"{quote.title[:48]}"
+            )
+            print(f"      unit {quote.unit_id[:12]}  {quote.locator.as_text()}")
+            for linha in _clip(quote.text, 320).splitlines():
+                print(f"      | {linha}")
+
+    if result.index_version:
+        print(f"\nindice {result.index_version}")
+    print("Trechos sao verbatim. Numeros vieram do motor. Nada aqui foi escrito por modelo.")
+
+
+def _capability_sha(snapshot) -> str:
+    from pat.research.canonical import capability_sha256
+
+    return capability_sha256(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -1822,6 +2075,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_plan.add_argument("--out", help="grava o envelope {question, plan} para `pat ask`")
     p_plan.set_defaults(func=cmd_plan)
+
+    # -- Fase 5 M5.3: programa de pesquisa -----------------------------------
+    p_prog = sub.add_parser(
+        "program", help="pergunta -> programa de pesquisa, em dois estagios (usa a API)"
+    )
+    p_prog.add_argument("text", help="a pergunta, em linguagem natural")
+    p_prog.add_argument("--as-of", dest="as_of", help="data de conhecimento (default: hoje)")
+    p_prog.add_argument(
+        "--output", default="narrative",
+        choices=["number", "series", "comparison", "narrative"],
+    )
+    p_prog.add_argument("--entity", action="append")
+    p_prog.add_argument("--period", action="append")
+    p_prog.add_argument("--scope", choices=["consolidated", "parent_only"])
+    p_prog.add_argument("--model", default=DEFAULT_PLANNER_MODEL)
+    p_prog.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
+    p_prog.add_argument("--no-cache", dest="no_cache", action="store_true")
+    p_prog.add_argument("--out", help="grava o envelope {question, program}")
+    p_prog.set_defaults(func=cmd_program)
+
+    p_runp = sub.add_parser(
+        "run-program", help="executa um programa ja escrito (SEM modelo)"
+    )
+    p_runp.add_argument("--program-file", dest="program_file", required=True)
+    p_runp.set_defaults(func=cmd_run_program)
 
     # -- Fase 4: a casca conversacional --------------------------------------
 

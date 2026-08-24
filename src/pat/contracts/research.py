@@ -281,6 +281,56 @@ class DerivationCard(Frozen):
     refusals: tuple[str, ...] = ()
 
 
+class DecompositionCard(Frozen):
+    """Que identidade contabil existe, e com que termos.
+
+    Carrega `concept_id`s, nunca `LineAddress`: o planejador nao precisa saber
+    em que codigo de conta o custo mora, e conta-lo seria o primeiro passo de
+    volta para casamento por rotulo. Mesma regra de `MappingCard`.
+    """
+
+    ref: str = Field(description="'nome@versao'")
+    axis: str
+    target_concept: str
+    target_label: str
+    terms: tuple[str, ...] = Field(description="concept_id com o sinal, ex. '-cogs'")
+    definition: str
+    available: bool = True
+    """False quando o eixo nao tem fonte estruturada neste regime.
+
+    Aparece no snapshot mesmo indisponivel, de proposito: um planejador que
+    nao soubesse que `SEGMENT` existe pediria decomposicao por segmento
+    achando que inventou a ideia, e receberia uma recusa que pareceria um bug.
+    Melhor ele ver que a ideia existe e esta bloqueada."""
+    unavailable_reason: str | None = None
+
+
+class CorpusCard(Frozen):
+    """Que documentos existem para uma empresa - nunca o que eles dizem.
+
+    A analogia exata de `EntityCard` do lado quantitativo: periodos e escopos
+    cobertos, jamais valores. Aqui: quantos documentos de cada tipo e em que
+    janela de publicacao, jamais uma linha de texto.
+
+    Sem isto, o estagio 2 do planejador escreveria buscas no escuro - pediria
+    transcricao de teleconferencia para uma empresa cujo corpus so tem release,
+    e a recusa chegaria ao usuario como "nao encontrei nada", que se le como
+    "a empresa nao falou disso".
+    """
+
+    entity_id: str
+    documents: int = Field(ge=0)
+    kinds: tuple[tuple[str, int], ...] = Field(
+        default=(), description="(DocumentKind, quantidade), ordenado"
+    )
+    published_from: date | None = None
+    published_to: date | None = None
+    units_indexed: int = Field(default=0, ge=0)
+    extraction_failures: int = Field(default=0, ge=0)
+    """Documentos que NAO viraram texto. Entra no snapshot porque cobertura
+    que esconde o que faltou mente sobre si mesma."""
+
+
 class SnapshotLimits(Frozen):
     max_steps: int = 32
     max_periods_per_entity: int = 12
@@ -304,6 +354,8 @@ class CapabilitySnapshot(Frozen):
     entities: tuple[EntityCard, ...] = ()
     scopes: tuple[ReportingScope, ...] = ()
     derivations: tuple[DerivationCard, ...] = ()
+    decompositions: tuple[DecompositionCard, ...] = ()
+    corpus: tuple[CorpusCard, ...] = ()
     limits: SnapshotLimits = SnapshotLimits()
 
 

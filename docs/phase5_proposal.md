@@ -291,11 +291,104 @@ Petrobras arquiva 20-F. Aí o eixo ganha membros mapeados por declaração, na m
 disciplina de `equivalence_basis`, e o executor de decomposição já construído
 funciona sem alteração: ele é agnóstico de eixo por construção.
 
-## M5.3 — `ResearchProgram` e planner em dois estágios (planejado)
+## M5.3 — `ResearchProgram` e planner em dois estágios ✅
 
-Envelope sobre `ResearchPlan v1`, que fica bit a bit intacto. Estágio 1 planeja
-cálculo; estágio 2 planeja evidência, vendo a **forma** dos resultados
-(direção, magnitude em faixas fixas) e nunca os valores.
+### O que um programa é
+
+Um `ResearchPlan` responde "quanto foi". Um `ResearchProgram` responde "o que
+precisa ser investigado":
+
+```
+ResearchProgram
+├── compute          métricas e derivações   (ResearchPlan v1, INTACTO)
+├── decompositions   de onde a variação veio (M5.2)
+└── evidence         o que a administração disse (M5.1)
+```
+
+`compute` é um `ResearchPlan v1` sem uma vírgula de alteração — um plano salvo
+em disco na Fase 3 continua executando igual. O programa **envolve** o plano,
+nunca o reescreve.
+
+### Por que dois estágios
+
+Não dá para saber que evidência pedir antes de saber o que os números fizeram.
+"Por que a receita caiu?" — a pergunta a fazer ao corpus depende de a queda ter
+sido de 3% ou de 30%, e de qual componente puxou. Um prompt único escolheria a
+citação antes de conhecer o número, que é como se produz uma narrativa
+convincente e errada.
+
+```
+estágio 1  planner.compute    pergunta + capability
+                              → plano de cálculo + decomposições
+           [executa DETERMINISTICAMENTE, sem persistir]
+estágio 2  planner.evidence   pergunta + capability + FORMA dos resultados
+                              → plano de evidência
+```
+
+Dois estágios **não** é retentativa: são dois papéis, com prompts e entradas
+diferentes, cada um com sua própria `PlanProvenance` e sua própria linha em
+`llm_call`. `ProgramEnvelope` guarda as duas separadas — colapsá-las esconderia
+qual estágio produziu o quê.
+
+### `ResultShape` — a fronteira
+
+O estágio 2 vê a **forma** dos resultados, nunca os valores:
+
+| campo | exemplo |
+|---|---|
+| `direction` | `down` |
+| `magnitude` | `large` (faixas fixas em `shape.py`, versionadas) |
+| `top_contributors` | `("operating_expenses_net", "revenue_net", "cogs")` |
+| `residual_is_material` | `false` |
+| `hits` | quantos trechos, jamais quais |
+
+`ResultShape` não tem campo capaz de carregar um `Decimal`, e um teste por AST
+confere. Outro teste monta o **prompt real** com a decomposição real da
+Petrobras e verifica que nenhum dos algarismos (`189342`, `52141`, `0.5498`…)
+aparece nos bytes enviados. É a mesma técnica de
+`test_o_escritor_nao_le_valor_nenhum` da Fase 3: a garantia é a forma do tipo,
+não uma instrução de prompt.
+
+Os degraus de magnitude são **código versionado**, não prompt. Um modelo não
+decide o que é "grande" — ele recebe a classificação já feita.
+
+### Ordem: decomposição antes de evidência
+
+O executor roda decomposição **antes** da busca, porque é ela que diz o que vale
+procurar. Um sistema que buscasse primeiro estaria escolhendo a citação e depois
+procurando o número que a sustenta.
+
+Falha parcial não aborta: um pedido que falha vira recusa nomeada e o programa
+continua. Saber que a decomposição fechou mas o corpus não tem nada sobre o
+assunto é um resultado útil.
+
+### Entregue
+
+| | |
+|---|---|
+| Contratos | `contracts/program.py` — `ResearchProgram`, `DecompositionRequest`, `EvidenceRequest`, `ResultShape`, `ProgramResult`, `ProgramEnvelope` |
+| Forma | `research/shape.py` — derivação determinística, faixas versionadas |
+| Executor | `research/program.py` — sem modelo, motor injetado |
+| Planejador | `research/program_planner.py` — dois estágios, duas procedências |
+| Capability | `DecompositionCard` e `CorpusCard` no snapshot — o que existe, nunca o que vale |
+| CLI | `pat program` (dois estágios, grava envelope), `pat run-program` (determinístico) |
+
+`CorpusCard` é o análogo de `EntityCard` do lado qualitativo: quantos documentos
+de cada tipo, em que janela, quantas unidades indexadas e **quantas falhas de
+extração** — cobertura que esconde o que faltou mente sobre si mesma. Sem ele o
+estágio 2 escreveria buscas no escuro, pedindo transcrição para uma empresa cujo
+corpus só tem release.
+
+### Verificado ponta a ponta
+
+`pat run-program` sobre a Petrobras, sem nenhuma chamada de modelo: EBIT cai
+R$ 52,1 bi com resíduo zero, despesa operacional identificada como maior
+contribuidor (55%), e a busca por `despesas provisao impairment` devolve trecho
+verbatim do release — *"crescimento das provisões em campos devolvidos em
+2023"* — com `unit_id`, página e offset. As duas metades do workspace numa
+execução auditável.
+
+26 testes novos. Suíte offline: 878.
 
 ## M5.4 — Grafo de claims e critic mecânico (planejado)
 

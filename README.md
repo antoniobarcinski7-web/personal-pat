@@ -6,15 +6,16 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5, Milestone 5.2.** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5, Milestone 5.3.** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
 com citações, com planner e writer atrás de um Protocol), o primeiro corpus
 qualitativo — documentos da CVM extraídos, indexados e citáveis verbatim, com
 `published_at ≤ as_of` garantido por construção e nenhum modelo no caminho da
-evidência — e a decomposição quantitativa, que abre a variação de um total nas
-partes que a produziram, com residual explícito.
+evidência — a decomposição quantitativa, que abre a variação de um total nas
+partes que a produziram com residual explícito, e o programa de pesquisa, que
+junta as duas metades num artefato revisável antes de executar.
 
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
@@ -392,6 +393,79 @@ mora em `research_run` e `llm_call`.
 
 ---
 
+## Programa de pesquisa (L3/L4) — Fase 5, M5.3
+
+Um `ResearchPlan` responde "quanto foi". Um `ResearchProgram` responde **o que
+precisa ser investigado** — e junta as duas metades do workspace numa execução
+auditável:
+
+```
+ResearchProgram
+├── compute          métricas e derivações       (ResearchPlan v1, INTACTO)
+├── decompositions   de onde a variação veio     (M5.2)
+└── evidence         o que a administração disse (M5.1)
+```
+
+```bash
+pat program "Por que o resultado operacional da Petrobras caiu em 2024?" \
+    --as-of 2025-06-30 --out p.json     # dois estágios, usa a API
+pat run-program --program-file p.json   # executa, SEM modelo nenhum
+```
+
+Como sempre, são **duas invocações**: o programa sai em disco, um humano lê o
+que o modelo escolheu investigar, e só então alguma coisa executa.
+
+### Por que o planejador tem dois estágios
+
+Não dá para saber que evidência pedir antes de saber o que os números fizeram.
+"Por que a receita caiu?" — a pergunta a fazer ao corpus depende de a queda ter
+sido de 3% ou de 30%, e de qual componente puxou. Um prompt único escolheria a
+citação antes de conhecer o número, que é exatamente como se produz uma
+narrativa convincente e errada.
+
+```
+estágio 1  planner.compute    pergunta + capability → plano + decomposições
+           [executa DETERMINISTICAMENTE, sem persistir nada]
+estágio 2  planner.evidence   pergunta + FORMA dos resultados → buscas
+```
+
+Dois estágios não é retentativa: são dois papéis, com prompts e entradas
+diferentes, cada um com sua própria `PlanProvenance` e sua própria linha em
+`llm_call`. Colapsá-las esconderia qual estágio produziu o quê.
+
+### O estágio 2 vê forma, nunca valor
+
+| campo | exemplo |
+|---|---|
+| `direction` | `down` |
+| `magnitude` | `large` — faixas fixas, em código versionado |
+| `top_contributors` | `("operating_expenses_net", "revenue_net", "cogs")` |
+| `residual_is_material` | a decomposição não fechou |
+| `hits` | quantos trechos, jamais quais |
+
+Saber que a despesa operacional puxou mais que a receita é o que permite buscar
+o que a administração disse sobre despesa — e isso não exige saber quanto.
+
+`ResultShape` não tem campo capaz de carregar um `Decimal`. Um teste confere por
+AST; outro monta o **prompt real** com a decomposição real da Petrobras e
+verifica que nenhum dos algarismos aparece nos bytes enviados. A garantia é a
+forma do tipo, como em `MetricStep` e `ConversationContext`.
+
+Os degraus de magnitude são código, não prompt: um modelo não decide o que é
+"grande", ele recebe a classificação já feita.
+
+### A ordem importa
+
+Decomposição roda **antes** da busca, porque é ela que diz o que vale procurar.
+Buscar primeiro seria escolher a citação e depois procurar o número que a
+sustenta.
+
+Falha parcial não aborta: um pedido que falha vira recusa nomeada e o programa
+continua. Saber que a decomposição fechou mas o corpus não tem nada sobre o
+assunto é um resultado útil.
+
+---
+
 ## Decomposição (L3) — Fase 5, M5.2
 
 `delta_pct` diz *quanto* mudou. A decomposição diz *de onde* a mudança veio:
@@ -578,8 +652,8 @@ trecho voltou em primeiro" tem que ter resposta.
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede, sem LLM) — 827 testes
-uv run pytest tests/research  # só a camada de pesquisa — 383
+uv run pytest              # suite padrão (sem rede, sem LLM) — 878 testes
+uv run pytest tests/research  # só a camada de pesquisa — 451
 uv run pytest tests/corpus    # só a camada de corpus — 58
 uv run pytest -m network   # contra a CVM real — 18 testes
 uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
@@ -663,6 +737,9 @@ src/pat/
 ├── research/        L3 — plano declarativo → resultado auditável. Sem LLM ainda.
 │   ├── canonical.py   JSON canônico + sha256: uma identidade, uma implementação
 │   ├── decompose.py   variação de um total → contribuições + residual explícito
+│   ├── program.py     executa o programa: cálculo + decomposição + evidência
+│   ├── program_planner.py  os dois estágios; o 2º vê forma, nunca valor
+│   ├── shape.py       resultado → forma (direção, faixa, ordem) — sem Decimal
 │   ├── capability.py  o que o sistema sabe fazer; jamais um valor financeiro
 │   ├── validate.py    validação pura: sem banco, sem relógio, sem rede
 │   ├── resolve.py     o que só o warehouse sabe responder
@@ -704,7 +781,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat evidence` devolve trecho verbatim com procedência até o byte; `pat decompose` abre a variação com residual explícito | 🚧 M5.1–M5.2 |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat run-program` junta número, decomposição e citação verbatim numa execução auditável, sem modelo no caminho | 🚧 M5.1–M5.3 |
 | **6** | B3 (preços, proventos), BCB, IBGE | | |
 | **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 

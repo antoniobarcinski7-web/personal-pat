@@ -350,13 +350,40 @@ def _importados_por_nome(path: Path) -> set[str]:
     }
 
 
-def test_so_o_escritor_e_o_planejador_falam_com_o_modelo():
+def test_so_o_escritor_e_os_planejadores_falam_com_o_modelo():
     """Conjunto EXATO dos modulos que constroem uma chamada de LLM.
 
-    O desenho da Fase 3 diz "no maximo uma chamada por planejador e uma por
-    escritor". Um terceiro modulo montando `LLMRequest` aparece aqui em vez de
-    passar despercebido - e a afirmacao volta a ser verificavel."""
-    assert _files_containing(RESEARCH, "llm.complete(") == {"planner.py", "writer.py"}
+    Um modulo novo montando `LLMRequest` aparece aqui em vez de passar
+    despercebido - e a afirmacao "o modelo entra em pontos contados" volta a
+    ser verificavel a cada suite.
+
+    `program_planner.py` entrou na M5.3 com DUAS chamadas, e elas nao sao uma
+    retentativa: sao dois papeis, com prompts e entradas diferentes, cada um
+    com sua propria `PlanProvenance` e sua propria linha em `llm_call`. O
+    estagio 1 escolhe o que medir e decompor; o estagio 2 ve a FORMA dos
+    resultados - direcao, faixa de magnitude, ordem dos contribuidores - e
+    escolhe o que procurar no corpus. Nenhum dos dois ve um valor.
+    """
+    assert _files_containing(RESEARCH, "llm.complete(") == {
+        "planner.py",
+        "program_planner.py",
+        "writer.py",
+    }
+
+
+def test_o_planejador_de_programa_nao_alcanca_dado_nem_persistencia():
+    """O estagio 2 ve forma, e nao warehouse.
+
+    Se `program_planner.py` pudesse ler o banco, a fronteira que `ResultShape`
+    existe para manter viraria decorativa: bastaria uma consulta para o valor
+    chegar ao prompt por outro caminho.
+    """
+    proibidos = ("pat.query", "pat.store", "pat.semantics.engine", "duckdb", "httpx")
+    for imported in _imports(RESEARCH / "program_planner.py"):
+        assert not imported.startswith(proibidos), (
+            f"program_planner.py importa {imported}: o planejador fala com o "
+            "modelo, nunca com o dado."
+        )
 
 
 # -- o planejador: fala com modelo, nunca com dado ---------------------------

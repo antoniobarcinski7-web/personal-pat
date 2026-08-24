@@ -35,6 +35,7 @@ __all__ = [
     "decimal_str",
     "normalize_text",
     "plan_id",
+    "program_id",
     "question_id",
     "result_id",
     "result_id_of",
@@ -81,6 +82,34 @@ def plan_id(plan: ResearchPlan) -> str:
             "outputs": plan.outputs,
             "assumptions": plan.assumptions,
             "unresolved": plan.unresolved,
+        }
+    )
+
+
+def program_id(program) -> str:
+    """Identidade de um programa de pesquisa.
+
+    Nada de `PlanProvenance` entra - nem a do estagio 1, nem a do estagio 2.
+    E o mesmo recorte de `plan_id`, e pela mesma razao: dois modelos que
+    produzam o mesmo programa produzem o mesmo hash, e metadado de chamada nao
+    mexe na identidade do que foi decidido investigar.
+
+    `questions_to_answer` ENTRA. Ele e prosa do planejador, mas prosa que muda
+    o que um humano aprova ao revisar - dois programas com os mesmos passos e
+    intencoes declaradas diferentes nao sao o mesmo programa.
+    """
+    return sha256_of(
+        {
+            "program_version": program.program_version,
+            "question_id": program.question_id,
+            "objective": program.objective,
+            "as_of": program.as_of,
+            "scope": program.scope,
+            "compute": program.compute,
+            "decompositions": program.decompositions,
+            "evidence": program.evidence,
+            "questions_to_answer": program.questions_to_answer,
+            "unresolved": program.unresolved,
         }
     )
 

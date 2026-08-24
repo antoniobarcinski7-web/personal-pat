@@ -20,6 +20,8 @@ import duckdb
 
 from pat.contracts.research import (
     CapabilitySnapshot,
+    CorpusCard,
+    DecompositionCard,
     ConceptCard,
     DerivationCard,
     DerivationOp,
@@ -164,6 +166,8 @@ def build_snapshot(
         entities=entity_cards,
         scopes=(ReportingScope.CONSOLIDATED, ReportingScope.PARENT_ONLY),
         derivations=DERIVATION_CARDS,
+        decompositions=_decomposition_cards(),
+        corpus=_corpus_cards(conn) if conn is not None else (),
         limits=SnapshotLimits(),
     )
 
@@ -175,6 +179,115 @@ def build_snapshot(
             "filtre entidades por pergunta, o que e mudanca de desenho."
         )
     return snapshot
+
+
+def _decomposition_cards() -> tuple[DecompositionCard, ...]:
+    """As identidades registradas, com os termos e o sinal de cada um.
+
+    Eixo sem fonte estruturada aparece marcado `available=False`, e nao some.
+    Um planejador que nao soubesse que `SEGMENT` existe pediria a decomposicao
+    achando que inventou a ideia, e receberia uma recusa que pareceria um bug;
+    vendo-a bloqueada, ele planeja em volta.
+    """
+    from pat.contracts.decomposition import BreakdownAxis
+    from pat.semantics import decompositions
+
+    cards = []
+    for definition in decompositions.all_definitions():
+        disponivel = definition.axis is BreakdownAxis.COMPONENT
+        cards.append(
+            DecompositionCard(
+                ref=definition.ref,
+                axis=str(definition.axis),
+                target_concept=definition.target_concept,
+                target_label=definition.target_label,
+                terms=tuple(
+                    f"{'+' if term.sign > 0 else '-'}{term.concept_id}"
+                    for term in definition.terms
+                ),
+                definition=definition.definition,
+                available=disponivel,
+                unavailable_reason=(
+                    None
+                    if disponivel
+                    else "no_breakdown_source: o plano padronizado da CVM nao publica "
+                    "esta dimensao"
+                ),
+            )
+        )
+    return tuple(cards)
+
+
+def _corpus_cards(conn: duckdb.DuckDBPyConnection) -> tuple[CorpusCard, ...]:
+    """Cobertura qualitativa por empresa. Contagens e datas, jamais texto.
+
+    Nenhuma linha desta funcao le `document_unit.text`, e ha teste que confere
+    que nenhum valor financeiro nem trecho entra no snapshot.
+    """
+    from pat.corpus.index import INDEX_VERSION
+
+    try:
+        linhas = conn.execute(
+            """
+            SELECT d.entity_id, d.kind, COUNT(*) AS docs,
+                   MIN(d.published_at), MAX(d.published_at)
+            FROM source_document d
+            GROUP BY d.entity_id, d.kind
+            ORDER BY d.entity_id, d.kind
+            """
+        ).fetchall()
+    except duckdb.Error:
+        # Warehouse anterior a M5.1 nao tem as tabelas de corpus. Snapshot sem
+        # cobertura qualitativa e a resposta certa - inventar zero diria que a
+        # empresa nao publicou nada.
+        return ()
+
+    if not linhas:
+        return ()
+
+    indexadas = dict(
+        conn.execute(
+            """
+            SELECT d.entity_id, COUNT(DISTINCT t.unit_id)
+            FROM source_document d
+            JOIN document_unit u ON u.document_id = d.document_id
+            JOIN document_unit_token t
+              ON t.unit_id = u.unit_id AND t.index_version = ?
+            GROUP BY d.entity_id
+            """,
+            [INDEX_VERSION],
+        ).fetchall()
+    )
+    falhas = dict(
+        conn.execute(
+            """
+            SELECT d.entity_id, COUNT(*)
+            FROM extraction_failure f
+            JOIN source_document d ON d.document_id = f.document_id
+            GROUP BY d.entity_id
+            """
+        ).fetchall()
+    )
+
+    por_entidade: dict[str, list] = {}
+    for entity_id, kind, docs, primeiro, ultimo in linhas:
+        por_entidade.setdefault(entity_id, []).append((kind, int(docs), primeiro, ultimo))
+
+    cards = []
+    for entity_id in sorted(por_entidade):
+        entradas = por_entidade[entity_id]
+        cards.append(
+            CorpusCard(
+                entity_id=entity_id,
+                documents=sum(quantidade for _, quantidade, _, _ in entradas),
+                kinds=tuple(sorted((kind, quantidade) for kind, quantidade, _, _ in entradas)),
+                published_from=min(primeiro for _, _, primeiro, _ in entradas),
+                published_to=max(ultimo for _, _, _, ultimo in entradas),
+                units_indexed=int(indexadas.get(entity_id, 0)),
+                extraction_failures=int(falhas.get(entity_id, 0)),
+            )
+        )
+    return tuple(cards)
 
 
 def snapshot_sha256(snapshot: CapabilitySnapshot) -> str:
