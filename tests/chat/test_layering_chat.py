@@ -208,9 +208,16 @@ def test_a_m41_nao_trouxe_dependencia_nova():
         dep.split(">")[0].split("=")[0].split("[")[0].strip()
         for dep in pyproject["project"]["dependencies"]
     }
-    assert nomes == {"pydantic", "httpx", "duckdb", "pytz", "anthropic"}, (
+    assert nomes == {"pydantic", "httpx", "duckdb", "pytz", "anthropic", "pypdf"}, (
         f"dependencias mudaram: {sorted(nomes)}"
     )
+    # `pypdf` entrou na Fase 5 (M5.1) por decisao registrada, e nao por
+    # descuido: extrair texto de PDF nao tem como ser feito pela stdlib, e
+    # todo documento qualitativo que a CVM publica e PDF. Foi escolhida a
+    # opcao minima - Python puro, BSD-3, zero dependencia transitiva - e a
+    # versao efetiva entra em `extraction_version`, de modo que trocar de
+    # biblioteca no futuro cria unidades novas em vez de mudar as antigas.
+    # O guard continua valendo para a proxima linha que alguem tentar somar.
 
 
 # -- L-11: o valor renderizado nao circula pela camada de conversa -----------

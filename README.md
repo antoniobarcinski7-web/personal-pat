@@ -6,12 +6,18 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 3, Milestone 1.** Espinha dorsal de dados (bronze → silver
-→ gold, consulta `AS OF`), camada semântica (conceitos universais, mapeamentos
-por regime, métricas versionadas) e o núcleo determinístico da camada de
-pesquisa: plano declarativo → validação → resolução → execução → renderização →
-resposta com citações, tudo auditável e sem uma linha de código de LLM. O
-planejador e o escritor entram nos Milestones 2 e 3.
+**Estado atual: Fase 5, Milestone 5.1.** Espinha dorsal de dados (bronze →
+silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
+mapeamentos por regime, métricas versionadas), camada de pesquisa completa
+(plano declarativo → validação → resolução → execução → renderização → resposta
+com citações, com planner e writer atrás de um Protocol) e o primeiro corpus
+qualitativo: documentos da CVM extraídos, indexados e citáveis verbatim, com
+`published_at ≤ as_of` garantido por construção e nenhum modelo no caminho da
+evidência.
+
+O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
+combinando evidência quantitativa e qualitativa para responder não só "quanto
+foi" mas "por quê".
 
 ---
 
@@ -383,12 +389,127 @@ tem autenticação e não deve ser exposto. O log das sessões fica em `data/cha
 e é conveniência de UI: apagá-lo não perde nada auditável, porque a auditoria
 mora em `research_run` e `llm_call`.
 
+---
+
+## Corpus qualitativo (L1.5) — Fase 5, M5.1
+
+O lado textual, construído com a mesma disciplina do lado numérico. Nenhum
+modelo participa deste caminho — a recuperação inteira é determinística, e isso
+é o critério, não um detalhe.
+
+```
+L1.5 CORPUS   SourceDocument → DocumentUnit → índice léxico → QuoteClaim
+              published_at ≤ as_of, sempre. Texto verbatim, sempre.
+```
+
+A simetria com a Fase 3 é exata:
+
+| numérico | textual |
+|---|---|
+| `Fact` | `DocumentUnit` |
+| `MetricResult` | `EvidenceResult` |
+| `MetricUnavailable` | `EvidenceUnavailable` |
+| `NumericClaim` | `QuoteClaim` |
+| `pat provenance <fact_id>` | `pat provenance-unit <unit_id>` |
+
+```bash
+pat fetch cvm.ipe --year 2024                    # catálogo de entregas ao regulador
+pat docs --cod-cvm 9512 --sync --year 2024       # busca, extrai e indexa os documentos
+pat docs --cod-cvm 9512                          # o acervo, e o que faltou dele
+pat docs --cod-cvm 9512 --failures               # o que NÃO foi extraído, e por quê
+
+pat evidence --cod-cvm 9512 --query "queda brent receita" --as-of 2024-12-31
+pat provenance-unit <unit_id>                    # da citação até o byte
+```
+
+O catálogo IPE e o documento são **datasets separados** de propósito:
+`cvm.ipe` é o índice anual de tudo que foi entregue ao regulador, e `cvm.ipe_doc`
+busca os bytes de um documento. O provider não descobre a URL de um documento —
+ela vem do catálogo, cuja leitura é da camada silver. Um provider que abrisse o
+ZIP para achar o link estaria interpretando, que é exatamente o que L0 não faz.
+
+### Os dois eixos de tempo valem para texto
+
+`published_at` é o `knowledge_date` do documento; `reference_date` é o que o
+emissor declarou como referência — e **não** é período coberto, porque o mesmo
+campo do protocolo diz "2024-09-30" tanto para um relatório do 3T24 quanto para
+uma ata de assembleia marcada naquele dia. Derivar período disso seria inferência
+por formato, o mesmo erro de casar conta por rótulo.
+
+Toda data carrega `DateBasis` — de onde ela veio. Uma data adivinhada que se
+apresenta como lida é o análogo textual do número aproximado que se apresenta
+como exato, e a base viaja até a citação.
+
+Consulta ao corpus sem `as_of` não existe: `EvidenceQuery.as_of` não aceita
+`None`, e o corte `published_at <= as_of` está no SQL, não numa checagem
+posterior. As duas consultas abaixo devolvem conjuntos diferentes porque há
+documento publicado entre elas:
+
+```bash
+pat evidence --cod-cvm 9512 --query "producao pre-sal recorde" --as-of 2024-06-30
+pat evidence --cod-cvm 9512 --query "producao pre-sal recorde" --as-of 2024-12-31
+```
+
+A primeira vê 15 documentos, a segunda 28 — e o trecho que encabeça a resposta
+muda. É o critério de conclusão da M5.1, e o análogo textual exato do critério
+da Fase 1.
+
+### Número de emissor é citação, nunca insumo
+
+A regra nova da Fase 5, e a que mais importa. Um release diz "receita de
+R$ 511,9 bilhões". Esse algarismo **pode** sair num relatório — dentro de uma
+citação verbatim, atribuído a quem o publicou, resolvendo até o byte. O que ele
+**não pode** é alimentar uma conta: não entra no gold, não vira insumo de
+derivação, e não é comparado com métrica sem que os dois lados estejam
+rotulados.
+
+Como sempre neste projeto, isso é forma de tipo e não instrução de prompt:
+`QuoteClaim` não tem `value`, não tem `unit`, não tem `currency` e não tem
+`Decimal`. Não há por onde o número ser lido como quantidade. Um teste por AST
+confere que nenhum campo desses apareça, e `test_layering_corpus.py` confere que
+nenhum módulo da camada de texto tem caminho até `store/gold`.
+
+### Extração: versionada, e que falha com nome
+
+`extraction_version` embute a versão efetiva do `pypdf` — não a versão mínima do
+`pyproject.toml`, que é outra coisa — e entra no `unit_id`. Reprocessar com
+extrator novo cria unidades **ao lado** das antigas. É a regra de
+`extractor_version` da Fase 1 aplicada a texto, e é o que faz uma citação de seis
+meses atrás continuar resolvendo depois de um upgrade de biblioteca.
+
+O texto de uma unidade é uma **fatia literal** do texto da página:
+`page_text[char_start:char_end]`, sem reescrita, sem colapsar espaço, sem juntar
+linha. Normalizar deixaria a citação mais bonita e menos verbatim, e a
+conferência `reextrair → fatiar → comparar` deixaria de ser byte a byte. É essa
+conferência que `pat provenance-unit` roda.
+
+Falha de extração é registro de primeira classe, com motivo nomeado
+(`no_text_layer`, `encrypted`, `malformed`, `unsupported_media_type`…), porque
+documento sem unidade e sem falha é indistinguível de documento que nunca foi
+buscado — e a diferença muda o que um analista conclui. **Não há fallback para
+OCR**, e não deve passar a haver: uma citação vinda de reconhecimento óptico é um
+texto que ninguém escreveu, e entraria no corpus indistinguível de uma real.
+
+### O índice é derivado, e o escore não é grandeza financeira
+
+Índice invertido explícito com BM25 em `Decimal`, e não a extensão FTS do
+DuckDB — que baixaria binário da internet na primeira execução e traria a versão
+que estivesse na máquina, deixando o ranking dependente disso. `index_version`
+viaja em todo `EvidenceResult`. Apagar a tabela de tokens e reconstruir a partir
+das unidades não perde nada; as unidades é que são a fonte, e o bronze é a fonte
+delas.
+
+`relevance` ordena texto: não tem unidade, não tem moeda, nunca entra num cálculo
+e nunca aparece na prosa. Existe para tornar o ranking auditável — "por que este
+trecho voltou em primeiro" tem que ter resposta.
+
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede, sem LLM) — 626 testes
+uv run pytest              # suite padrão (sem rede, sem LLM) — 827 testes
 uv run pytest tests/research  # só a camada de pesquisa — 383
-uv run pytest -m network   # contra a CVM real — 11 testes
+uv run pytest tests/corpus    # só a camada de corpus — 58
+uv run pytest -m network   # contra a CVM real — 18 testes
 uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
 ```
 
@@ -433,21 +554,26 @@ src/pat/
 │   ├── silver.py      AccountLine — uma linha de CSV da CVM, tipada
 │   ├── facts.py       Fact bitemporal
 │   ├── semantics.py   Concept, LineAddress, ConceptBinding, Mapping, MetricResult
-│   └── research.py    ResearchPlan, PlanStep, ComputationResult, Claim, manifesto
-│                      ← nenhum passo de plano aceita Decimal: número literal é
-│                        inexprimível na gramática, não apenas proibido
+│   ├── research.py    ResearchPlan, PlanStep, ComputationResult, Claim, manifesto
+│   │                  ← nenhum passo de plano aceita Decimal: número literal é
+│   │                    inexprimível na gramática, não apenas proibido
+│   └── corpus.py      SourceDocument, DocumentUnit, QuoteClaim, EvidenceQuery
+│                      ← QuoteClaim não aceita Decimal, value, unit nem currency:
+│                        número de emissor é citação, jamais insumo de cálculo
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
-│   └── public/cvm.py  DFP, ITR, cadastro
+│   └── public/cvm.py  DFP, ITR, cadastro, IPE (catálogo e documento)
 ├── parse/           L1 — bytes → linhas tipadas
-│   └── cvm_dfp.py     abre o ZIP da DFP, tipa cada CSV, registra o que descartou
+│   ├── cvm_dfp.py     abre o ZIP da DFP, tipa cada CSV, registra o que descartou
+│   └── cvm_ipe.py     catálogo de entregas; Categoria → DocumentKind por tabela
 ├── store/           L1 — bronze imutável + catálogo + silver + gold
 │   ├── bronze.py      content-addressed, atômico, somente-leitura, verificável
 │   ├── catalog.py     runs, documentos, retrievals, detecção de mudança
 │   ├── silver.py      persiste AccountLine; idempotente por silver_id
 │   ├── gold.py        escala, tipo de período, validação → Fact. Append-only.
 │   ├── research.py    persiste o manifesto de pesquisa. Quem calcula não grava.
+│   ├── corpus.py      documentos, unidades e falhas de extração. Append-only.
 │   └── db.py          conexão e esquema
 ├── semantics/       L2 — conceitos universais, mapeamentos por regime, métricas
 │   ├── concepts.py    catálogo universal; não menciona plano de contas
@@ -469,6 +595,13 @@ src/pat/
 │   ├── render.py      único lugar que formata número para exibição
 │   ├── answer.py      montagem de claims, substituição de token, regra do dígito
 │   └── manifest.py    o que foi executado, com que versões e sob que hashes
+├── corpus/          L1.5 — documento qualitativo → unidade citável → evidência
+│   ├── extract.py     único lugar que conhece pypdf; determinístico e versionado
+│   ├── index.py       tokenizador e BM25 em Decimal; índice derivado e descartável
+│   ├── retrieve.py    única porta de leitura de evidência; as_of obrigatório
+│   ├── identity.py    unit_id e query_id endereçados por conteúdo
+│   └── __init__.py    catálogo → bronze → unidades → índice, tudo idempotente
+├── canonical.py     serialização canônica do sistema inteiro; uma implementação
 ├── query/asof.py    única porta de leitura do gold; toda consulta exige AS OF
 ├── audit/run.py     manifesto de execução (versão, git sha, timestamps)
 ├── ingest.py        orquestração: resolve → fetch → put → record
@@ -495,8 +628,9 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | B3 (preços, proventos), BCB, IBGE | | |
-| **6** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição por segmento, programa de pesquisa, grafo de claims, critic | `pat evidence` devolve trecho verbatim com procedência até o byte, e `as_of` diferentes divergem | 🚧 M5.1 |
+| **6** | B3 (preços, proventos), BCB, IBGE | | |
+| **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 
 A Fase 3 abandonou o desenho original de *sandbox + coder*: sem código gerado,
 não há sandbox a proteger. O modelo escolhe **o que** perguntar, dentro de uma

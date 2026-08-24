@@ -47,6 +47,9 @@ class CVMProvider(PublicSourceProvider):
 
     DFP_MIN_YEAR: ClassVar[int] = 2010
     ITR_MIN_YEAR: ClassVar[int] = 2011
+    IPE_MIN_YEAR: ClassVar[int] = 2003
+
+    _IPE_DOC_HOST: ClassVar[str] = "https://www.rad.cvm.gov.br/"
 
     def datasets(self) -> tuple[DatasetSpec, ...]:
         return (
@@ -77,6 +80,32 @@ class CVMProvider(PublicSourceProvider):
                 license=_LICENSE,
                 notes="Snapshot corrente, sem historico. Buscar periodicamente.",
             ),
+            DatasetSpec(
+                dataset_id="cvm.ipe",
+                title="Informacoes Periodicas e Eventuais - catalogo do ano",
+                tier=self.tier,
+                params=("year",),
+                homepage=f"{_HOMEPAGE}/cia_aberta-doc-ipe",
+                license=_LICENSE,
+                notes=(
+                    "Catalogo, nao conteudo: lista os documentos entregues no ano com "
+                    "data de entrega, categoria, versao e link. Os documentos em si sao "
+                    "buscados por cvm.ipe_doc."
+                ),
+            ),
+            DatasetSpec(
+                dataset_id="cvm.ipe_doc",
+                title="Informacoes Periodicas e Eventuais - um documento",
+                tier=self.tier,
+                params=("url", "protocolo"),
+                homepage="https://www.rad.cvm.gov.br/",
+                license=_LICENSE,
+                notes=(
+                    "Busca os bytes de UM documento entregue. A URL vem do catalogo "
+                    "cvm.ipe - o provider nao a descobre, porque descobrir exigiria "
+                    "interpretar o catalogo, e interpretar e da camada silver."
+                ),
+            ),
         )
 
     def resolve(self, dataset_id: str, **params: str) -> tuple[ResourceRef, ...]:
@@ -98,8 +127,26 @@ class CVMProvider(PublicSourceProvider):
         unexpected = set(params) - set(spec.params)
         if unexpected:
             raise SourceError(f"{dataset_id}: parametros desconhecidos {sorted(unexpected)}")
+
+        if dataset_id == "cvm.ipe_doc":
+            return self._resolve_ipe_doc(dataset_id, params)
+
         if "year" not in params:
             raise SourceError(f"{dataset_id} exige o parametro 'year' (ex. 2024, 2020-2024)")
+
+        if dataset_id == "cvm.ipe":
+            years = self._parse_years(params["year"], self.IPE_MIN_YEAR)
+            return tuple(
+                ResourceRef(
+                    provider_id=self.provider_id,
+                    dataset_id=dataset_id,
+                    resource_key=str(year),
+                    url=f"{_BASE}/DOC/IPE/DADOS/ipe_cia_aberta_{year}.zip",
+                    media_type="application/zip",
+                    params=(("year", str(year)),),
+                )
+                for year in years
+            )
 
         kind = "dfp" if dataset_id == "cvm.dfp" else "itr"
         min_year = self.DFP_MIN_YEAR if kind == "dfp" else self.ITR_MIN_YEAR
@@ -115,6 +162,46 @@ class CVMProvider(PublicSourceProvider):
                 params=(("year", str(year)),),
             )
             for year in years
+        )
+
+    def _resolve_ipe_doc(self, dataset_id: str, params: dict[str, str]) -> tuple[ResourceRef, ...]:
+        """Um documento entregue, endereçado pela URL que o catalogo publicou.
+
+        O provider nao descobre esta URL e nao a interpreta: ela vem do
+        catalogo `cvm.ipe`, cuja leitura e da camada silver. Se a resolucao
+        morasse aqui, o provider precisaria abrir um ZIP e ler um CSV - que e
+        exatamente o que a regra "providers nao interpretam" existe para
+        impedir.
+
+        `resource_key` e o protocolo de entrega, e nao a URL: o protocolo e o
+        recurso *logico* (aquele documento daquela entrega), enquanto os bytes
+        sao o recurso fisico. A CVM aceita reapresentacao de documento sob o
+        mesmo protocolo com versao nova, entao a mesma disciplina do ZIP anual
+        vale aqui - dois retrievals do mesmo protocolo com hashes diferentes
+        sao a evidencia primaria de que o documento foi reapresentado.
+        """
+        for required in ("url", "protocolo"):
+            if not params.get(required):
+                raise SourceError(f"{dataset_id} exige o parametro {required!r}")
+
+        url = params["url"]
+        if not url.startswith(self._IPE_DOC_HOST):
+            raise SourceError(
+                f"{dataset_id} so busca documentos em {self._IPE_DOC_HOST}; recebeu {url!r}. "
+                "A URL tem que vir do catalogo da CVM, e nao de outro lugar."
+            )
+
+        return (
+            ResourceRef(
+                provider_id=self.provider_id,
+                dataset_id=dataset_id,
+                resource_key=params["protocolo"],
+                url=url,
+                # Sem media_type declarado: o header da CVM diz `text/html` para
+                # um PDF. O tipo real e detectado dos bytes, na extracao.
+                media_type=None,
+                params=(("protocolo", params["protocolo"]),),
+            ),
         )
 
     @staticmethod

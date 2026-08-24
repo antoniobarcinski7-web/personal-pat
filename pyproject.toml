@@ -12,6 +12,12 @@ dependencies = [
     # a garantia de timezone dos contratos.
     "pytz>=2024.1",
     "anthropic>=0.122.0",
+    # Extracao de texto de PDF (Fase 5). Python puro, BSD-3, sem dependencia
+    # transitiva - a escolha minima possivel para um requisito que nao tem
+    # como ser atendido pela stdlib. A versao efetiva entra em
+    # `extraction_version`, entao trocar de biblioteca ou de versao cria
+    # unidades novas ao lado das antigas em vez de mudar as existentes.
+    "pypdf>=6.1.1",
 ]
 
 [project.optional-dependencies]

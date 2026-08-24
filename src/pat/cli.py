@@ -410,6 +410,317 @@ def cmd_provenance(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Fase 5 M5.1 - corpus qualitativo
+# ---------------------------------------------------------------------------
+
+
+def _entity_for_cod_cvm(conn, cod_cvm: int) -> tuple[str, str] | None:
+    ref = AsOf(conn).entity_by_cod_cvm(cod_cvm)
+    if ref is None:
+        print(
+            f"nenhum fato no gold para cod_cvm={cod_cvm}. "
+            f"Rode `pat build cvm.dfp --cod-cvm {cod_cvm}` primeiro - o corpus "
+            "qualitativo se pendura na mesma entidade do quantitativo.",
+            file=sys.stderr,
+        )
+        return None
+    return ref.entity_id, ref.denom_cia
+
+
+def _kinds(raw: list[str]):
+    from pat.contracts.corpus import DocumentKind
+
+    out = []
+    for value in raw:
+        try:
+            out.append(DocumentKind(value))
+        except ValueError:
+            known = ", ".join(sorted(k.value for k in DocumentKind))
+            print(f"tipo desconhecido: {value!r}. Disponiveis: {known}", file=sys.stderr)
+            return None
+    return out
+
+
+def cmd_docs(args) -> int:
+    """O acervo qualitativo de uma empresa - e o que faltou dele."""
+    from pat.store import corpus as corpus_store
+
+    kinds = _kinds(args.kind)
+    if kinds is None:
+        return 1
+
+    if args.sync:
+        return _docs_sync(args)
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    if resolved is None:
+        conn.close()
+        return 1
+    entity_id, denom = resolved
+
+    if args.failures:
+        failures = corpus_store.extraction_failures(conn, entity_id)
+        if not failures:
+            print(f"{denom}: nenhuma falha de extracao registrada.")
+        for document_id, reason, message, title in failures:
+            print(f"{document_id[:12]}  {reason:<24} {title}")
+            print(f"              {message}")
+        conn.close()
+        return 0
+
+    documents = corpus_store.documents_for_entity(
+        conn, entity_id, as_of=args.as_of, kinds=kinds
+    )
+    if not documents:
+        escopo = f" conhecidos em {args.as_of}" if args.as_of else ""
+        print(f"{denom}: nenhum documento{escopo} no corpus.")
+        print("Popule com `pat docs --cod-cvm ... --sync --year ...`.")
+        conn.close()
+        return 0
+
+    counts = conn.execute(
+        "SELECT document_id, COUNT(*) FROM document_unit GROUP BY document_id"
+    ).fetchall()
+    units_by_document = dict(counts)
+
+    print(f"{denom}  ({entity_id})")
+    if args.as_of:
+        print(f"AS OF {args.as_of} - documentos publicados depois disso nao aparecem")
+    print(f"{len(documents)} documento(s)\n")
+    print(f"{'PUBLICADO':<12} {'TIPO':<21} {'UNID':>5}  TITULO")
+    for document in documents:
+        units = units_by_document.get(document.document_id, 0)
+        marker = "  " if units else " !"
+        print(
+            f"{document.published_at.isoformat():<12} {document.kind.value:<21} "
+            f"{units:>5}{marker}{document.title[:60]}"
+        )
+    if any(not units_by_document.get(d.document_id) for d in documents):
+        print("\n! sem unidade extraida - `pat docs --cod-cvm ... --failures` diz por que")
+    conn.close()
+    return 0
+
+
+def _docs_sync(args) -> int:
+    from pat.corpus import catalog_entries, sync_documents
+
+    if not args.year:
+        print("--sync exige --year (o catalogo IPE e anual)", file=sys.stderr)
+        return 1
+
+    bronze, catalog, conn = _open(args)
+    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    if resolved is None:
+        conn.close()
+        return 1
+    entity_id, denom = resolved
+
+    run = new_run(f"docs --sync --cod-cvm {args.cod_cvm} --year {args.year}")
+    catalog.start_run(run)
+    registry = Registry()
+    try:
+        entries = catalog_entries(conn, bronze, year=args.year, cod_cvm=args.cod_cvm)
+    except LookupError as exc:
+        print(str(exc), file=sys.stderr)
+        catalog.finish_run(run.run_id, RunStatus.FAILED, datetime.now(UTC))
+        conn.close()
+        return 1
+
+    kinds = _kinds(args.kind)
+    if kinds:
+        entries = [e for e in entries if e.kind in kinds]
+
+    print(f"{denom}: {len(entries)} documento(s) no catalogo IPE de {args.year}")
+    try:
+        outcome = sync_documents(
+            conn,
+            entity_id=entity_id,
+            entries=entries,
+            registry=registry,
+            bronze=bronze,
+            catalog=catalog,
+            run=run,
+            limit=args.limit,
+        )
+    except SourceError as exc:
+        print(f"falha na origem: {exc}", file=sys.stderr)
+        catalog.finish_run(run.run_id, RunStatus.FAILED, datetime.now(UTC))
+        conn.close()
+        return 1
+    finally:
+        registry.close()
+
+    catalog.finish_run(run.run_id, RunStatus.SUCCEEDED, datetime.now(UTC))
+    print(
+        f"buscados {outcome.documents_fetched} | novos {outcome.documents_new} | "
+        f"ja tinha {outcome.skipped_existing}"
+    )
+    print(f"unidades {outcome.units_written} | indexadas {outcome.units_indexed}")
+    if outcome.failures:
+        print(f"\n{outcome.failed} documento(s) NAO extraidos - registrados, nao silenciados:")
+        for document_id, reason, title in outcome.failures:
+            print(f"  {document_id[:12]}  {reason}  {title[:56]}")
+    conn.close()
+    return 0
+
+
+def cmd_evidence(args) -> int:
+    """Trechos verbatim. Nenhum modelo participa deste caminho."""
+    from pat.contracts.corpus import EvidenceQuery, EvidenceUnavailable
+    from pat.corpus.retrieve import retrieve
+
+    kinds = _kinds(args.kind)
+    if kinds is None:
+        return 1
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    if resolved is None:
+        conn.close()
+        return 1
+    entity_id, denom = resolved
+
+    terms = tuple(dict.fromkeys(t for t in args.query.split() if t.strip()))
+    if not terms:
+        print("consulta vazia", file=sys.stderr)
+        conn.close()
+        return 1
+
+    try:
+        query = EvidenceQuery(
+            entity_id=entity_id,
+            terms=terms,
+            as_of=args.as_of,
+            kinds=tuple(kinds),
+            published_from=args.published_from,
+            published_to=args.published_to,
+            limit=args.limit,
+        )
+    except ValueError as exc:
+        print(f"consulta invalida: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    result = retrieve(conn, query)
+    if isinstance(result, EvidenceUnavailable):
+        print(f"SEM EVIDENCIA  ({result.reason})")
+        print(f"  {result.message}")
+        if result.documents_excluded_by_as_of:
+            print(
+                f"  {result.documents_excluded_by_as_of} documento(s) existem mas sao "
+                f"posteriores a {result.as_of}"
+            )
+        if result.remedy:
+            print(f"  {result.remedy}")
+        conn.close()
+        return 1
+
+    print(f"{denom}  AS OF {result.as_of}")
+    print(
+        f"{result.documents_in_scope} documento(s) e {result.units_in_scope} unidade(s) "
+        f"no escopo; {len(result.hits)} trecho(s)"
+    )
+    print(f"indice {result.index_version}\n")
+
+    for hit in result.hits:
+        quote = hit.quote
+        print(f"[{hit.rank}] {quote.published_at}  {quote.document_kind.value}  {quote.title[:56]}")
+        print(
+            f"    unit {quote.unit_id[:12]}  doc {quote.document_id[:12]}  "
+            f"{quote.locator.as_text()}  tier={quote.source_tier.value}"
+        )
+        print(f"    data por: {quote.published_at_basis.value}")
+        if quote.speaker:
+            marca = "Q&A" if quote.speaker.is_qna else "apresentacao"
+            print(f"    quem fala: {quote.speaker.name} ({quote.speaker.role.value}, {marca})")
+        text = quote.text if args.full else _clip(quote.text, 420)
+        for line in text.splitlines():
+            print(f"    | {line}")
+        print()
+
+    print("Trechos sao verbatim. `pat provenance-unit <unit_id>` reconfere contra o blob.")
+    conn.close()
+    return 0
+
+
+def _clip(text: str, limit: int) -> str:
+    """Corta para exibicao, e DIZ que cortou.
+
+    O texto guardado continua inteiro; isto e so a tela. Um corte silencioso
+    faria uma citacao parcial parecer completa, que e a forma mais facil de
+    tirar uma frase de contexto sem ninguem perceber.
+    """
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n[... {len(text) - limit} caracteres; use --full]"
+
+
+def cmd_provenance_unit(args) -> int:
+    """De uma citacao ate os bytes. O analogo qualitativo de `pat provenance`."""
+    from pat.corpus import verify_unit
+    from pat.store import corpus as corpus_store
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    unit = corpus_store.read_unit(conn, args.unit_id)
+    if unit is None:
+        print(f"unit_id desconhecido: {args.unit_id}", file=sys.stderr)
+        conn.close()
+        return 1
+    document = corpus_store.read_document(conn, unit.document_id)
+    if document is None:
+        print(f"unidade orfa: documento {unit.document_id} ausente", file=sys.stderr)
+        conn.close()
+        return 1
+
+    paths = resolve_paths(args.home)
+    bronze = BronzeStore(paths.bronze)
+
+    print(f"unidade     {unit.unit_id}")
+    print(f"  locator    {unit.locator.as_text()}  ordinal={unit.ordinal}")
+    print(f"  extracao   {unit.extraction_version}")
+    print(f"  {unit.char_count} caracteres")
+    print(f"documento   {document.document_id}")
+    print(f"  titulo     {document.title}")
+    print(f"  tipo       {document.kind.value}  tier={document.source_tier.value}")
+    print(f"  publicado  {document.published_at} (base: {document.published_at_basis.value})")
+    if document.reference_date:
+        print(f"  referencia {document.reference_date} (base do emissor, nao periodo coberto)")
+    print(f"  origem     {document.origin_category} v{document.origin_version}")
+    print(f"  url        {document.source_url}")
+    print(f"  retrieval  {document.retrieval_id}")
+    print(f"blob        {_human_bytes(document.byte_size)} em {bronze.path_of(document.document_id)}")
+
+    verification = verify_unit(unit, document, bronze)
+    print("\nreconferencia contra os bytes:")
+    print(f"  blob presente       {'sim' if verification.blob_found else 'NAO'}")
+    print(f"  hash confere        {'sim' if verification.blob_sha256_matches else 'NAO'}")
+    if unit.extraction_version != _current_extraction_version():
+        print(
+            f"  texto confere       n/a (unidade extraida por {unit.extraction_version}, "
+            f"o extrator atual e {_current_extraction_version()})"
+        )
+        print("  Nao e divergencia: e passagem do tempo. A unidade antiga continua valida.")
+    else:
+        print(f"  texto reextraido    {'IDENTICO' if verification.text_matches else 'DIVERGE'}")
+
+    print("\ntrecho (verbatim):")
+    for line in unit.text.splitlines():
+        print(f"  | {line}")
+
+    conn.close()
+    return 0 if verification.blob_found and verification.blob_sha256_matches else 1
+
+
+def _current_extraction_version() -> str:
+    from pat.corpus.extract import EXTRACTION_VERSION
+
+    return EXTRACTION_VERSION
+
+
+# ---------------------------------------------------------------------------
 # Fase 2 - camada semantica
 # ---------------------------------------------------------------------------
 
@@ -1415,6 +1726,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Sem `--host`: ver o cabecalho de `chat/http.py`.
     p_serve.set_defaults(func=cmd_serve)
+
+    # -- Fase 5 M5.1: corpus qualitativo ------------------------------------
+    p_docs = sub.add_parser("docs", help="documentos qualitativos de uma empresa")
+    p_docs.add_argument("--cod-cvm", type=int, required=True)
+    p_docs.add_argument(
+        "--sync",
+        action="store_true",
+        help="busca do catalogo IPE os documentos ainda ausentes (usa rede)",
+    )
+    p_docs.add_argument("--year", type=int, help="ano do catalogo IPE, exigido por --sync")
+    p_docs.add_argument("--kind", action="append", default=[], help="filtra por DocumentKind")
+    p_docs.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        help="lista so o que era conhecido nesta data; sem ela, lista o acervo",
+    )
+    p_docs.add_argument("--limit", type=int, default=None, help="teto de documentos no --sync")
+    p_docs.add_argument("--failures", action="store_true", help="lista as falhas de extracao")
+    p_docs.set_defaults(func=cmd_docs)
+
+    p_ev = sub.add_parser("evidence", help="trechos verbatim, com procedencia (sem LLM)")
+    p_ev.add_argument("--cod-cvm", type=int, required=True)
+    p_ev.add_argument("--query", required=True, help="termos de busca, separados por espaco")
+    p_ev.add_argument("--as-of", type=date.fromisoformat, required=True)
+    p_ev.add_argument("--kind", action="append", default=[])
+    p_ev.add_argument("--published-from", type=date.fromisoformat)
+    p_ev.add_argument("--published-to", type=date.fromisoformat)
+    p_ev.add_argument("--limit", type=int, default=5)
+    p_ev.add_argument("--full", action="store_true", help="mostra o trecho inteiro")
+    p_ev.set_defaults(func=cmd_evidence)
+
+    p_pu = sub.add_parser(
+        "provenance-unit", help="de uma citacao ate os bytes: unidade, documento, blob"
+    )
+    p_pu.add_argument("unit_id")
+    p_pu.set_defaults(func=cmd_provenance_unit)
 
     p_runs = sub.add_parser("runs", help="execucoes recentes")
     p_runs.add_argument("--limit", type=int, default=20)

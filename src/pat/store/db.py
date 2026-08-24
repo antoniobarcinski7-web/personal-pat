@@ -257,6 +257,107 @@ CREATE INDEX IF NOT EXISTS idx_llm_call_manifest
 
 CREATE INDEX IF NOT EXISTS idx_llm_call_prompt
     ON llm_call (prompt_sha256);
+
+-- ---------------------------------------------------------------------------
+-- CORPUS (Fase 5, M5.1): o lado qualitativo, com os mesmos dois eixos de tempo.
+--
+-- `source_document` e a interpretacao tipada de um blob que ja esta no bronze;
+-- `document_id` E o sha256 do conteudo, entao uma reapresentacao de documento
+-- e uma linha nova, nunca uma edicao. Append-only, como gold_fact.
+--
+-- `published_at` e o knowledge_date do texto: e o predicado que todo AS OF do
+-- corpus usa, e por isso ele esta no indice.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS source_document (
+    document_id          VARCHAR PRIMARY KEY,
+    entity_id            VARCHAR NOT NULL,
+
+    kind                 VARCHAR NOT NULL,
+    title                VARCHAR NOT NULL,
+    language             VARCHAR NOT NULL,
+
+    source_tier          VARCHAR NOT NULL,
+    published_at         DATE NOT NULL,
+    published_at_basis   VARCHAR NOT NULL,
+    reference_date       DATE,
+    reference_date_basis VARCHAR,
+
+    media_type           VARCHAR NOT NULL,
+    byte_size            BIGINT NOT NULL,
+
+    provider_id          VARCHAR NOT NULL,
+    dataset_id           VARCHAR NOT NULL,
+    resource_key         VARCHAR NOT NULL,
+    source_url           VARCHAR NOT NULL,
+    retrieval_id         VARCHAR NOT NULL,
+
+    origin_category      VARCHAR,
+    origin_version       VARCHAR,
+
+    first_seen_at        TIMESTAMPTZ NOT NULL,
+    first_seen_run_id    VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_document_asof
+    ON source_document (entity_id, published_at, kind);
+
+-- Unidade citavel. `extraction_version` entra em `unit_id`, entao reprocessar
+-- com extrator novo INSERE ao lado em vez de sobrescrever - e a citacao antiga
+-- continua resolvendo para o texto que ela queria dizer.
+CREATE TABLE IF NOT EXISTS document_unit (
+    unit_id            VARCHAR PRIMARY KEY,
+    document_id        VARCHAR NOT NULL,
+    ordinal            INTEGER NOT NULL,
+
+    locator_scheme     VARCHAR NOT NULL,
+    locator_page       INTEGER,
+    locator_block      INTEGER,
+    locator_node_path  VARCHAR,
+    locator_turn       INTEGER,
+    char_start         INTEGER NOT NULL,
+    char_end           INTEGER NOT NULL,
+
+    text               VARCHAR NOT NULL,
+    char_count         INTEGER NOT NULL,
+    section_path       VARCHAR[] NOT NULL DEFAULT [],
+
+    speaker_name       VARCHAR,
+    speaker_role       VARCHAR,
+    speaker_is_qna     BOOLEAN,
+
+    extraction_version VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_unit_doc
+    ON document_unit (document_id, ordinal);
+
+-- Falha de extracao e registro de primeira classe, e nao ausencia de linha:
+-- documento sem unidade e sem falha e indistinguivel de documento que nunca
+-- foi buscado, e a diferenca entre os dois muda o que um analista conclui.
+CREATE TABLE IF NOT EXISTS extraction_failure (
+    document_id        VARCHAR NOT NULL,
+    extraction_version VARCHAR NOT NULL,
+    reason             VARCHAR NOT NULL,
+    message            VARCHAR NOT NULL,
+    remedy             VARCHAR,
+    failed_at          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (document_id, extraction_version)
+);
+
+-- Indice invertido. Derivado e descartavel: apagar e reconstruir a partir de
+-- `document_unit` nao perde nada. `index_version` na chave permite duas
+-- versoes coexistirem, para que um resultado antigo continue explicavel.
+CREATE TABLE IF NOT EXISTS document_unit_token (
+    unit_id       VARCHAR NOT NULL,
+    index_version VARCHAR NOT NULL,
+    token         VARCHAR NOT NULL,
+    tf            INTEGER NOT NULL,
+    unit_length   INTEGER NOT NULL,
+    PRIMARY KEY (unit_id, index_version, token)
+);
+
+CREATE INDEX IF NOT EXISTS idx_unit_token_lookup
+    ON document_unit_token (index_version, token);
 """
 
 

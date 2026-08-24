@@ -164,6 +164,53 @@ existe `allow_missing=True`, e não deve passar a existir.
 Moeda nunca é convertida implicitamente. Insumos em moedas diferentes param o
 cálculo.
 
+## A camada de corpus (Fase 5)
+
+Evidência textual é uma camada **paralela** aos fatos, nunca uma fonte deles.
+As regras que não se negociam:
+
+1. **Número de emissor é citação, nunca insumo.** Um release diz "receita de
+   R$ 511,9 bilhões". O algarismo pode sair no relatório dentro de um
+   `QuoteClaim`, atribuído a quem publicou. Não pode entrar no gold, virar
+   insumo de derivação, ser reescalado ou convertido. Como sempre, a garantia é
+   de tipo: `QuoteClaim` não tem `value`, `unit`, `currency` nem `Decimal`.
+   Chamo o modo de falha de *lavagem de número do emissor*; é por onde todo
+   sistema desse tipo acaba publicando um número que ninguém calculou.
+
+2. **`published_at` é o `knowledge_date` do texto.** Consulta ao corpus sem
+   `as_of` não existe, e o corte está no SQL. Citar documento posterior ao
+   `as_of` é o vazamento mais fácil de cometer — porque deixa a resposta
+   *melhor*.
+
+3. **Toda data carrega `DateBasis`.** Data adivinhada que se apresenta como
+   lida é o análogo textual do número aproximado que se apresenta como exato.
+   `RETRIEVED_AT_FALLBACK` erra para o lado seguro (limite superior) e diz que
+   errou.
+
+4. **`reference_date` não é período coberto.** O campo do protocolo diz
+   "2024-09-30" tanto para um relatório do 3T24 quanto para uma ata marcada
+   naquele dia. Derivar período disso é inferência por formato — o mesmo erro
+   de casar conta por rótulo.
+
+5. **Verbatim é byte a byte.** `DocumentUnit.text` é fatia literal do texto da
+   página; `QuoteClaim.text` é idêntico a ela. Sem normalizar, sem `strip`, sem
+   reticência. A conferência é `reextrair → fatiar → comparar`, e é o que
+   `pat provenance-unit` roda.
+
+6. **Falha de extração é registro, nunca ausência.** Documento sem unidade e
+   sem falha se lê como "não há nada a dizer". Não existe fallback para OCR nem
+   para uma segunda biblioteca: citação vinda de reconhecimento óptico é texto
+   que ninguém escreveu.
+
+7. **`extraction_version` entra no `unit_id`**, e inclui a versão efetiva do
+   `pypdf`. Reprocessar cria unidades ao lado das antigas. É
+   `extractor_version` da Fase 1, aplicado a texto.
+
+`Categoria` da CVM → `DocumentKind` é uma **tabela declarada** em
+`parse/cvm_ipe.py`, não uma heurística. Categoria desconhecida vira `OTHER`
+explicitamente; o documento continua armazenado e citável, marcado como não
+classificado. É a mesma disciplina de `equivalence_basis`.
+
 ## Testes
 
 - `pytest` — suite padrão, sem rede.
