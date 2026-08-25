@@ -6,7 +6,7 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5, Milestone 5.4.** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5, Milestone 5.5.** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
@@ -15,9 +15,10 @@ qualitativo — documentos da CVM extraídos, indexados e citáveis verbatim, co
 `published_at ≤ as_of` garantido por construção e nenhum modelo no caminho da
 evidência — a decomposição quantitativa, que abre a variação de um total nas
 partes que a produziram com residual explícito, o programa de pesquisa, que
-junta as duas metades num artefato revisável antes de executar, e o grafo de
+junta as duas metades num artefato revisável antes de executar, o grafo de
 afirmações com critic mecânico, em que nenhuma frase existe sem procedência
-tipada.
+tipada, e o Company Workspace, que só se declara pronto quando seis requisitos
+objetivos estão satisfeitos.
 
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
@@ -395,6 +396,70 @@ mora em `research_run` e `llm_call`.
 
 ---
 
+## Company Workspace e auditoria (L4/L5) — Fase 5, M5.5
+
+```bash
+pat company --cod-cvm 9512                              # o que se sabe, e o que falta
+pat run-program --program-file p.json --writer --audit  # + critic de modelo
+```
+
+### `READY` não é um adjetivo
+
+É a conjunção de **seis requisitos conferíveis**, cada um com nome próprio e
+remédio de uma linha:
+
+1. tem fatos no gold;
+2. pelo menos **dois períodos** — sem dois não há variação, e sem variação não há
+   pergunta causal a fazer;
+3. mapeamento próprio e **conferido** (cair na família default é razoável para
+   explorar, não para declarar a empresa pronta);
+4. os conceitos que as decomposições exigem estão ligados;
+5. há documentos no corpus;
+6. há unidades indexadas na versão corrente do índice.
+
+O contrato recusa `READY` com pendência **e** `DRAFT` sem pendência declarada: se
+nada falta o estado é READY, se algo falta tem que ter nome.
+
+```
+pat company --cod-cvm 9512  → READY   Petrobras: 4.428 fatos, 3 períodos,
+                                      mapeamento conferido, 3 decomposições,
+                                      28 documentos, 4.676 unidades
+pat company --cod-cvm 4170  → DRAFT   Vale: [no_documents] nenhum documento
+                                      qualitativo — saída: pat docs --sync
+```
+
+`missing_concepts` e `extraction_failures` são campos de primeira classe, não
+rodapé: cobertura que só mostra o que existe mente sobre si mesma.
+
+### O critic de modelo julga o que a máquina não consegue julgar
+
+Entra **depois** do critic mecânico e só sobre o que sobrou. Recebe o conjunto
+**finito** de evidências recuperadas — inclusive as que o escritor **não** citou,
+marcadas como tal. É isso que torna `SELECTIVE_EVIDENCE` possível: a pergunta
+"existe um trecho que contradiz a conclusão e ficou de fora?" só tem resposta
+porque o conjunto é fechado e auditável.
+
+Ele não pesquisa, não busca documento novo, não acessa o warehouse, não corrige e
+não rechama o escritor — conferido por AST.
+
+### O modelo não escolhe sozinho o que bloqueia
+
+Um achado de critic de modelo é ele próprio um julgamento não verificado.
+Deixá-lo declarar qualquer coisa como dura seria dar-lhe veto sobre um relatório
+possivelmente correto. A severidade que ele pede é limitada por código
+versionado:
+
+| pode bloquear | só acompanha |
+|---|---|
+| `SELECTIVE_EVIDENCE`, `CAUSAL_OVERREACH` | `QUOTE_OUT_OF_CONTEXT`, `STALE_EVIDENCE`, `MISSING_DECOMPOSITION`, `UNQUANTIFIED_MAGNITUDE` |
+
+Os dois primeiros tornam o relatório **enganoso** — um cita só o que confirma, o
+outro afirma causa onde há menção. Em research, enganoso é pior que ausente. Os
+demais o deixam incompleto, e bloquear seria tratar "faltou dizer" como "disse
+errado".
+
+---
+
 ## Grafo de afirmações e critic (L4) — Fase 5, M5.4
 
 Nenhuma frase de um relatório existe sem procedência tipada. Cinco espécies:
@@ -721,8 +786,8 @@ trecho voltou em primeiro" tem que ter resposta.
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede, sem LLM) — 904 testes
-uv run pytest tests/research  # só a camada de pesquisa — 477
+uv run pytest              # suite padrão (sem rede, sem LLM) — 914 testes
+uv run pytest tests/research  # só a camada de pesquisa — 487
 uv run pytest tests/corpus    # só a camada de corpus — 58
 uv run pytest -m network   # contra a CVM real — 18 testes
 uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
@@ -778,7 +843,8 @@ src/pat/
 │   ├── decomposition.py  Contribution, DecompositionResult — as partes somam o
 │   │                  todo por construção; o residual nunca é opcional
 │   ├── program.py     ResearchProgram, ResultShape — a forma que o estágio 2 vê
-│   └── claims.py      ClaimNode, ClaimGraph — CALCULATION não se apoia em QUOTE
+│   ├── claims.py      ClaimNode, ClaimGraph — CALCULATION não se apoia em QUOTE
+│   └── workspace.py   CompanyWorkspace — READY é conjunção, não adjetivo
 ├── sources/         L0 — busca bytes com procedência, nunca interpreta
 │   ├── base.py        SourceProvider, PublicSourceProvider, LicensedSourceProvider
 │   ├── registry.py    resolve dataset_id → provider
@@ -814,6 +880,8 @@ src/pat/
 │   ├── claims.py      resultado → nós ancorados; o modelo nunca os cria
 │   ├── program_writer.py  grafo → leituras e conclusões; nunca vê valor
 │   ├── critic.py      critic mecânico, taxonomia fechada, sem loop
+│   ├── model_critic.py  julga o que a máquina não julga; severidade limitada
+│   ├── workspace.py   DRAFT/READY por seis requisitos conferíveis
 │   ├── capability.py  o que o sistema sabe fazer; jamais um valor financeiro
 │   ├── validate.py    validação pura: sem banco, sem relógio, sem rede
 │   ├── resolve.py     o que só o warehouse sabe responder
@@ -855,7 +923,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic | `pat run-program --writer` produz relatório em que toda frase tem procedência tipada, e o critic bloqueia o que não resolve até o byte | 🚧 M5.1–M5.4 |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic, workspace | Petrobras passa de `DRAFT` a `READY`; `pat run-program --writer --audit` produz relatório em que toda frase tem procedência tipada | 🚧 M5.1–M5.5 |
 | **6** | B3 (preços, proventos), BCB, IBGE | | |
 | **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 

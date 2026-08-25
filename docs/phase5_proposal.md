@@ -491,11 +491,97 @@ grafo registrasse a omissão.
 
 26 testes novos. Suíte offline: 904.
 
-## M5.5 — Critic de modelo e workspace (planejado)
+## M5.5 — Critic de modelo e Company Workspace ✅
 
-Critic sobre o conjunto **finito** de evidências recuperadas. Não pesquisa, não
-corrige, não reescreve. Sem loop writer↔critic. Workspace com estados
-`DRAFT`/`READY`.
+### O critic de modelo entra depois, e só sobre o que sobrou
+
+A divisão entre os dois critics é o ponto do desenho. Citação que não bate com
+os bytes, dígito fora de citação e evidência posterior ao `as_of` são conferíveis
+por código — um modelo no meio disso só pioraria a auditoria. O que resta —
+*"esta conclusão vai além do que a evidência sustenta?"* — não tem como ser
+conferido mecanicamente.
+
+Ele recebe o **conjunto finito** de evidências que a execução recuperou,
+**inclusive as que o escritor não citou**, cada uma marcada com
+`citado_no_relatorio`. É isso que torna `SELECTIVE_EVIDENCE` possível: a pergunta
+"existe um trecho que contradiz a conclusão e ficou de fora?" só tem resposta
+porque o conjunto é fechado, registrado e auditável.
+
+Ele **não** pesquisa, não busca documento novo, não acessa o warehouse, não
+corrige o escritor e não o rechama. Um teste por AST confere que ele não importa
+`pat.query`, `pat.store`, `pat.corpus.retrieve`, `duckdb` nem `httpx`.
+
+### Por que o modelo não escolhe sozinho o que bloqueia
+
+Um achado de critic de modelo é, ele próprio, um julgamento não verificado.
+Deixá-lo declarar qualquer achado como duro seria dar-lhe veto sobre um relatório
+possivelmente correto. A severidade que ele pede é **limitada por
+`_MAX_SEVERITY`**, que é código versionado:
+
+| código | teto |
+|---|---|
+| `SELECTIVE_EVIDENCE` | hard |
+| `CAUSAL_OVERREACH` | hard |
+| `QUOTE_OUT_OF_CONTEXT` | soft |
+| `STALE_EVIDENCE` | soft |
+| `MISSING_DECOMPOSITION` | soft |
+| `UNQUANTIFIED_MAGNITUDE` | soft |
+
+Os dois que podem bloquear são os que tornam o relatório **enganoso** — um cita
+só o que confirma, o outro afirma causa onde há menção. Em research, enganoso é
+pior que ausente. Os demais deixam o relatório incompleto, e bloquear seria
+tratar "faltou dizer" como "disse errado".
+
+`ModelFinding` recusa na construção uma severidade acima do teto. A escolha de
+quais códigos podem bloquear é uma decisão de arquitetura, revisável num diff —
+não uma linha de prompt.
+
+`evidence_considered` viaja no relatório porque "não achei evidência seletiva"
+sobre dois trechos é uma afirmação bem mais fraca do que sobre vinte.
+
+### O Company Workspace
+
+`READY` não é um adjetivo: é a **conjunção de seis requisitos conferíveis**, cada
+um com nome próprio e remédio de uma linha.
+
+1. A empresa tem fatos no gold.
+2. Pelo menos **dois períodos** — sem dois não há variação, e sem variação não há
+   pergunta causal a fazer, que é o que a fase existe para responder.
+3. Mapeamento próprio e **conferido**. Cair na família default é razoável para
+   explorar; declarar a empresa pronta sem saber que caiu nela, não.
+4. Os conceitos que as decomposições registradas exigem estão ligados.
+5. Há documentos no corpus.
+6. Há unidades indexadas na versão corrente do índice.
+
+Nenhum é opinião e nenhum tem tolerância — um requisito com "mais ou menos" seria
+a porta por onde um workspace incompleto se declara pronto. O contrato recusa
+`READY` com pendência **e** `DRAFT` sem pendência declarada: se nada falta o
+estado é READY, se algo falta tem que ter nome.
+
+`missing_concepts` e `extraction_failures` são campos de primeira classe, não
+notas de rodapé. Cobertura que só mostra o que existe mente sobre si mesma — e a
+mentira aparece como ausência de evidência, que é o que um analista leria como
+evidência de ausência.
+
+`workspace_sha256` cobre cadeia de mapeamento, conjunto de documentos, versão do
+índice e versões de métrica; `built_at` fica de fora, pela mesma razão do
+`capability_sha256`. É o que distingue "a resposta mudou" de "os dados mudaram".
+
+### Verificado
+
+```
+pat company --cod-cvm 9512   → READY   (Petrobras: 4.428 fatos, 3 períodos,
+                                        mapeamento conferido, 3 decomposições,
+                                        28 documentos, 4.676 unidades)
+pat company --cod-cvm 4170   → DRAFT   (Vale: [no_documents] nenhum documento
+                                        qualitativo; saída: pat docs --sync)
+```
+
+```bash
+pat run-program --program-file p.json --writer --audit
+```
+
+10 testes novos. Suíte offline: 914.
 
 ## M5.6 — SEC / US GAAP (planejado)
 

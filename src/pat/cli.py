@@ -411,6 +411,88 @@ def cmd_provenance(args) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Fase 5 M5.5 - o workspace da empresa
+# ---------------------------------------------------------------------------
+
+
+def cmd_company(args) -> int:
+    """O estado de uma empresa: o que se sabe, e o que falta saber.
+
+    `READY` nao e um adjetivo - e a conjuncao de requisitos conferiveis, cada
+    um com nome proprio e remedio de uma linha. Um workspace que se declarasse
+    pronto por sentimento seria a mesma classe de erro que um numero
+    aproximado que se apresenta como exato.
+    """
+    from pat.contracts.workspace import WorkspaceState
+    from pat.research.workspace import build_workspace
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+    try:
+        resolvido = _entity_for_cod_cvm(conn, args.cod_cvm)
+        if resolvido is None:
+            return 1
+        entity_id, denom = resolvido
+
+        workspace = build_workspace(
+            conn,
+            entity_id=entity_id,
+            display_name=denom,
+            cod_cvm=args.cod_cvm,
+            source=DEFAULT_SOURCE,
+            as_of=args.as_of,
+        )
+        _print_workspace(workspace)
+        return 0 if workspace.state is WorkspaceState.READY else 1
+    finally:
+        conn.close()
+
+
+def _print_workspace(workspace) -> None:
+    marca = "READY" if workspace.is_ready else "DRAFT"
+    print(f"{workspace.display_name}  ({workspace.entity_id})")
+    print(f"  estado     {marca}")
+    print(f"  workspace  {workspace.workspace_sha256[:16]}")
+    if workspace.as_of:
+        print(f"  AS OF      {workspace.as_of}")
+
+    q = workspace.quantitative
+    print("\nQUANTITATIVO")
+    print(f"  fatos          {q.facts:,}")
+    print(f"  periodos       {', '.join(p.isoformat() for p in q.period_ends) or '-'}")
+    print(f"  escopos        {', '.join(q.scopes) or '-'}")
+    marca_map = "conferido" if q.mapping_confirmed else "FAMILIA DEFAULT"
+    print(f"  mapeamento     {q.mapping_id or '-'}  [{marca_map}]")
+    print(f"  metricas       {len(q.metrics_available)}")
+    print(f"  decomposicoes  {', '.join(q.decompositions_available) or '-'}")
+    if q.missing_concepts:
+        print(f"  conceitos NAO ligados  {', '.join(q.missing_concepts)}")
+
+    t = workspace.qualitative
+    print("\nQUALITATIVO")
+    print(f"  documentos     {t.documents}")
+    for kind, quantidade in t.kinds:
+        print(f"    {kind:<24} {quantidade}")
+    if t.published_from:
+        print(f"  publicados     {t.published_from} .. {t.published_to}")
+    print(f"  unidades       {t.units_indexed:,}  [{t.index_version or 'nao indexado'}]")
+    if t.extraction_failures:
+        print(f"  NAO extraidos  {len(t.extraction_failures)}")
+        for document_id, motivo in t.extraction_failures[:5]:
+            print(f"    {document_id[:12]}  {motivo}")
+
+    if workspace.gaps:
+        print(f"\nFALTA PARA FICAR READY ({len(workspace.gaps)})")
+        for lacuna in workspace.gaps:
+            print(f"  [{lacuna.code}] {lacuna.message}")
+            print(f"    saida: {lacuna.remedy}")
+            for detalhe in lacuna.detail:
+                print(f"      - {detalhe}")
+    else:
+        print("\nTodos os requisitos objetivos satisfeitos.")
+
+
+# ---------------------------------------------------------------------------
 # Fase 5 M5.3 - programa de pesquisa
 # ---------------------------------------------------------------------------
 
@@ -687,22 +769,87 @@ def _write_and_review(args, envelope, result, snapshot) -> int:
         )
         return 1
 
+    prosa = substitute(written.blocks, grounded.values)
     print("\n" + "=" * 72)
     print("RELATORIO")
     print("=" * 72)
-    for texto in substitute(written.blocks, grounded.values):
+    for texto in prosa:
         print(f"\n{texto}")
 
     _print_claim_graph(written.graph)
 
     if relatorio.soft:
-        print(f"\nRESSALVAS DO CRITIC ({len(relatorio.soft)})")
+        print(f"\nRESSALVAS DO CRITIC MECANICO ({len(relatorio.soft)})")
         for achado in relatorio.soft:
             print(f"  [{achado.code}] {achado.message}")
         print(
             "  Achados leves acompanham a resposta em vez de bloquea-la: o numero "
             "continua certo, o que falta e a ressalva."
         )
+
+    if args.audit:
+        return _audit(args, envelope, result, written, prosa, snapshot, llm)
+    return 0
+
+
+def _audit(args, envelope, result, written, prosa, snapshot, llm) -> int:
+    """O critic de MODELO, sobre o conjunto finito de evidencias recuperadas.
+
+    Roda depois do mecanico e so sobre o que sobrou: o que da para conferir por
+    codigo ja foi conferido, e um modelo no meio daquilo so pioraria a
+    auditoria. O que resta - "esta conclusao vai alem do que a evidencia
+    sustenta?" - nao tem como ser conferido mecanicamente.
+    """
+    from pat.research.llm import LLMError
+    from pat.research.llm.cache import call_sha256_of
+    from pat.research.model_critic import run_model_critic
+    from pat.research.planner import PlannerError
+
+    try:
+        auditoria = run_model_critic(
+            envelope.question,
+            written.graph,
+            result,
+            prosa,
+            snapshot,
+            llm=llm,
+            model=args.model,
+            max_tokens=args.max_tokens,
+        )
+    except PlannerError as exc:
+        print(f"\no critic nao produziu achados validos: {exc}", file=sys.stderr)
+        return 1
+    except LLMError as exc:
+        print(f"chamada ao critic falhou: {exc}", file=sys.stderr)
+        return 2
+
+    _record_call(
+        args,
+        auditoria.provenance,
+        call_sha256=call_sha256_of(auditoria.provenance.prompt_sha256, llm.fingerprint),
+    )
+
+    parecer = auditoria.report
+    print(
+        f"\nAUDITORIA ({parecer.evidence_considered} trecho(s) recuperado(s) "
+        "considerados)"
+    )
+    if not parecer.findings:
+        print("  nenhum achado.")
+        return 0
+
+    for achado in parecer.hard:
+        print(f"  [BLOQUEIA {achado.code}] {achado.message}", file=sys.stderr)
+    for achado in parecer.soft:
+        print(f"  [ressalva {achado.code}] {achado.message}")
+
+    if parecer.blocks:
+        print(
+            "\nO relatorio acima esta BLOQUEADO pela auditoria. Nao ha reescrita "
+            "automatica: o critic aponta e para, e um humano decide.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -2197,6 +2344,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--out", help="grava o envelope {question, plan} para `pat ask`")
     p_plan.set_defaults(func=cmd_plan)
 
+    # -- Fase 5 M5.5: o workspace da empresa ---------------------------------
+    p_comp = sub.add_parser(
+        "company", help="estado do workspace de uma empresa: o que se sabe e o que falta"
+    )
+    p_comp.add_argument("--cod-cvm", type=int, required=True)
+    p_comp.add_argument(
+        "--as-of", type=date.fromisoformat, default=None,
+        help="cobertura conhecida nesta data; sem ela, o acervo inteiro",
+    )
+    p_comp.set_defaults(func=cmd_company)
+
     # -- Fase 5 M5.3: programa de pesquisa -----------------------------------
     p_prog = sub.add_parser(
         "program", help="pergunta -> programa de pesquisa, em dois estagios (usa a API)"
@@ -2228,6 +2386,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_runp.add_argument("--model", default=DEFAULT_PLANNER_MODEL)
     p_runp.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
     p_runp.add_argument("--no-cache", dest="no_cache", action="store_true")
+    p_runp.add_argument(
+        "--audit",
+        action="store_true",
+        help="roda tambem o critic de modelo sobre a evidencia recuperada (usa a API)",
+    )
     p_runp.set_defaults(func=cmd_run_program)
 
     # -- Fase 4: a casca conversacional --------------------------------------

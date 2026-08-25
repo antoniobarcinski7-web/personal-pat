@@ -148,7 +148,11 @@ def test_nenhum_modulo_de_pesquisa_constroi_um_motor():
 
 def test_so_resolve_capability_e_a_raiz_tocam_a_camada_de_consulta():
     atravessam = _files_importing(RESEARCH, ("pat.query",))
-    assert atravessam == {"resolve.py", "capability.py"}
+    assert atravessam == {"resolve.py", "capability.py", "workspace.py"}
+    # `workspace.py` entrou na M5.5 e e da mesma especie dos outros dois: ele
+    # DESCREVE o que existe (periodos cobertos, mapeamento, documentos) para
+    # decidir se a empresa esta pesquisavel. Nao calcula metrica e nao grava
+    # nada - continua valendo que quem calcula nao toca persistencia.
 
 
 # -- R6: o validador e puro ---------------------------------------------------
@@ -367,8 +371,15 @@ def test_so_o_escritor_e_os_planejadores_falam_com_o_modelo():
     `program_writer.py` entrou na M5.4, e tambem nao ve valor: ele recebe um
     grafo de nos ja ancorados, com token e rotulo, e so pode ACRESCENTAR
     leitura e conclusao - especies que nao tem campo de valor nem de endereco.
+
+    `model_critic.py` entrou na M5.5. Ele nao escreve relatorio: le o que foi
+    escrito mais o conjunto FINITO de evidencias recuperadas, e devolve
+    achados de uma taxonomia fechada. A severidade que ele pede e limitada por
+    codigo versionado - o modelo nao tem veto sobre um relatorio possivelmente
+    correto.
     """
     assert _files_containing(RESEARCH, "llm.complete(") == {
+        "model_critic.py",
         "planner.py",
         "program_planner.py",
         "program_writer.py",
