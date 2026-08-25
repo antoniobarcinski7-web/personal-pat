@@ -21,6 +21,7 @@ import threading
 from datetime import date
 
 from pat.chat.session import ConversationState, SessionStore
+from pat.chat.program_turn import run_program_turn
 from pat.chat.turn import run_turn
 from pat.chat.view import turn_view
 from pat.config import Paths
@@ -46,6 +47,7 @@ class ChatService:
         source: str = DEFAULT_SOURCE,
         git_sha: str | None = None,
         default_as_of: date | None = None,
+        program_path: bool = True,
     ) -> None:
         self.paths = paths
         self.model = model
@@ -56,6 +58,19 @@ class ChatService:
         --as-of` signifique alguma coisa sem que a UI tenha que repeti-lo em
         toda sessao nova; continua sendo escolha por sessao, nunca por
         mensagem."""
+        self.program_path = program_path
+        """Qual caminho responde um turno.
+
+        `True` (default): o caminho da Fase 5 - dois estagios de planejamento,
+        decomposicao, evidencia do corpus, escritor sobre o grafo de afirmacoes
+        e critic mecanico. E o que permite responder "por que caiu?".
+
+        `False`: o caminho da Fase 3 - metricas e as sete derivacoes, uma
+        chamada de planejador e uma de escritor. Mais barato e mais estreito;
+        continua existindo porque e o que `pat ask --plan-file` reexecuta sem
+        modelo, e porque uma pergunta puramente quantitativa nao precisa das
+        quatro chamadas do outro."""
+
         self._llm = llm
         self._sessions = SessionStore(paths.chat)
         self._snapshot = None
@@ -86,7 +101,8 @@ class ChatService:
             state = self._sessions.get(request.session_id)
             if state is None:
                 raise UnknownSession(request.session_id)
-            turn = run_turn(
+            executar = run_program_turn if self.program_path else run_turn
+            turn = executar(
                 request,
                 state,
                 paths=self.paths,
@@ -131,6 +147,41 @@ class ChatService:
             "derivations": [
                 {"op": str(card.op), "arity": card.arity, "refusals": list(card.refusals)}
                 for card in snapshot.derivations
+            ],
+            # As duas listas abaixo entraram quando o chat passou a rodar o
+            # caminho do programa. Sem elas a UI mostrava metricas e derivacoes
+            # e escondia justamente o que responde "por que caiu?" - alguem
+            # olharia a tela e concluiria que o sistema nao decompoe nada.
+            #
+            # Decomposicao indisponivel aparece com `available: false` e o
+            # motivo, e nao some: um eixo bloqueado que sumisse da tela faria a
+            # recusa parecer um bug quando alguem perguntasse por ele.
+            "decompositions": [
+                {
+                    "ref": card.ref,
+                    "axis": card.axis,
+                    "target": card.target_label,
+                    "definition": card.definition,
+                    "available": card.available,
+                    "unavailable_reason": card.unavailable_reason,
+                }
+                for card in snapshot.decompositions
+            ],
+            "corpus": [
+                {
+                    "entity_id": card.entity_id,
+                    "documents": card.documents,
+                    "kinds": [list(k) for k in card.kinds],
+                    "published_from": card.published_from.isoformat()
+                    if card.published_from
+                    else None,
+                    "published_to": card.published_to.isoformat()
+                    if card.published_to
+                    else None,
+                    "units_indexed": card.units_indexed,
+                    "extraction_failures": card.extraction_failures,
+                }
+                for card in snapshot.corpus
             ],
             "scopes": [str(s) for s in snapshot.scopes],
             "limits": {

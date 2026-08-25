@@ -243,7 +243,10 @@ def conversa(paths3):
     from pat.chat import ChatService
 
     llm = ConversaFake()
-    service = ChatService(paths=paths3, llm=llm, model="fake-model", default_as_of=t3.AS_OF)
+    service = ChatService(
+        paths=paths3, llm=llm, model="fake-model", default_as_of=t3.AS_OF,
+        program_path=False,  # cobre o caminho da Fase 3
+    )
     state = service.create_session()
 
     turnos = []
@@ -546,7 +549,10 @@ def test_e2e_a_recusa_do_turno_4_entra_no_contexto_de_um_turno_seguinte(paths3):
     from pat.chat.session import build_context
 
     llm = ConversaFake()
-    service = ChatService(paths=paths3, llm=llm, model="fake-model", default_as_of=t3.AS_OF)
+    service = ChatService(
+        paths=paths3, llm=llm, model="fake-model", default_as_of=t3.AS_OF,
+        program_path=False,  # cobre o caminho da Fase 3
+    )
     state = service.create_session()
 
     for indice, pergunta in enumerate(PERGUNTAS):

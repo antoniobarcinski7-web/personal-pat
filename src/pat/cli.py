@@ -2130,6 +2130,7 @@ def cmd_serve(args) -> int:
         model=args.model,
         git_sha=current_git_sha(),
         default_as_of=date.fromisoformat(args.as_of) if args.as_of else None,
+        program_path=not getattr(args, "legacy_plan", False),
     )
     service.snapshot()  # falha aqui, antes de aceitar conexao, se o warehouse nao servir
 
@@ -2443,6 +2444,15 @@ def build_parser() -> argparse.ArgumentParser:
         dest="no_cache",
         action="store_true",
         help="ignora o cache de chamadas e paga a chamada de novo",
+    )
+    p_serve.add_argument(
+        "--legacy-plan",
+        dest="legacy_plan",
+        action="store_true",
+        help=(
+            "usa o caminho da Fase 3 - metricas e as sete derivacoes, duas chamadas "
+            "de modelo. Mais barato e mais estreito: nao responde 'por que caiu?'"
+        ),
     )
     # Sem `--host`: ver o cabecalho de `chat/http.py`.
     p_serve.set_defaults(func=cmd_serve)

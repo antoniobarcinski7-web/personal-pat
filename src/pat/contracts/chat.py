@@ -182,6 +182,26 @@ class TurnRefusal(Frozen):
 # ---------------------------------------------------------------------------
 
 
+class ProgramSummary(Frozen):
+    """O que um programa investigou, na forma que a UI mostra.
+
+    Resumo, e nao o programa inteiro: a tela precisa saber o que foi medido,
+    decomposto e buscado, e o artefato completo continua recuperavel pelo
+    `program_id`. Nenhum campo aqui carrega `Decimal` - pela mesma razao de
+    sempre, o valor viaja pela substituicao de token e nao pelo contexto.
+    """
+
+    objective: str = Field(min_length=1)
+    questions_to_answer: tuple[str, ...] = ()
+    metric_steps: int = Field(default=0, ge=0)
+    decompositions: tuple[str, ...] = ()
+    """`ref` de cada decomposicao pedida, ex. 'ebit_by_line@v1'."""
+    evidence_queries: tuple[tuple[str, str], ...] = ()
+    """(termos, por que) de cada busca. O `rationale` do planejador."""
+    claims: tuple[tuple[str, int], ...] = ()
+    """(especie, quantidade) no grafo de afirmacoes."""
+
+
 class ChatTurn(Frozen):
     """Um turno inteiro, do que foi perguntado ao que foi respondido.
 
@@ -212,12 +232,50 @@ class ChatTurn(Frozen):
     refusal: TurnRefusal | None = None
     elapsed_ms: int = Field(ge=0)
 
+    # -- caminho do PROGRAMA (Fase 5) ---------------------------------------
+    #
+    # Campos opcionais, e nao um `ChatTurn` novo: um turno continua sendo um
+    # turno, e a UI, o log de sessao e a auditoria nao deviam se bifurcar em
+    # dois formatos por causa de qual caminho respondeu. O que muda e o que
+    # esta preenchido.
+    #
+    # O caminho da Fase 3 (`plan` + `manifest`) continua valendo e continua
+    # testado: ele e o que `pat ask --plan-file` reexecuta sem modelo.
+    program_id: Sha256 | None = None
+    program_summary: "ProgramSummary | None" = None
+    prose: tuple[str, ...] = ()
+    """O relatorio ja com os tokens substituidos. Vazio no caminho da Fase 3,
+    onde a prosa mora em `answer.prose`."""
+
+    critic_findings: tuple[tuple[str, str, str], ...] = ()
+    """(severidade, codigo, mensagem) do critic mecanico. Ressalvas acompanham
+    a resposta; achado duro vira recusa antes de chegar aqui."""
+
+    @property
+    def answered(self) -> bool:
+        """Houve resposta, por qualquer um dos dois caminhos.
+
+        Fase 3 responde em `answer`; Fase 5 responde em `prose`, porque o
+        relatorio nasce de um grafo de afirmacoes e nao de um `ResearchAnswer`.
+        A UI e a auditoria perguntam ISTO, e nao qual campo esta preenchido.
+        """
+        return self.answer is not None or bool(self.prose)
+
     @model_validator(mode="after")
     def _check(self) -> "ChatTurn":
-        # Nao existe resposta parcial: se alguma saida do plano nao foi
-        # calculada, o escritor nem e chamado e o turno e recusa. Turno com os
-        # dois campos - ou com nenhum - e o estado que a UI nao sabe mostrar, e
-        # que um dia seria mostrado como se fosse resposta.
-        if (self.answer is None) == (self.refusal is None):
+        # Nao existe resposta parcial: se alguma saida nao foi calculada, o
+        # escritor nem e chamado e o turno e recusa. Turno com os dois - ou com
+        # nenhum - e o estado que a UI nao sabe mostrar, e que um dia seria
+        # mostrado como se fosse resposta.
+        #
+        # A condicao passou a olhar `answered` na M5.6+ porque o caminho do
+        # programa responde em `prose`. A invariante e a mesma; o que mudou foi
+        # deixar de confundi-la com "o campo `answer` esta preenchido".
+        if self.answered == (self.refusal is not None):
             raise ValueError("um turno e exatamente uma resposta ou exatamente uma recusa")
+        if self.answer is not None and self.prose:
+            raise ValueError(
+                "um turno responde por UM caminho: `answer` (Fase 3) ou `prose` "
+                "(programa), nunca os dois"
+            )
         return self

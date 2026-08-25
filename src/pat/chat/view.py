@@ -50,7 +50,7 @@ def turn_view(turn: ChatTurn, *, entity_names: dict[str, str]) -> dict:
 
 
 def _status(turn: ChatTurn) -> str:
-    if turn.answer is not None:
+    if turn.answered:
         return "answered"
     return "failed" if turn.refusal.kind in _MODEL_FAILURES else "refused"
 

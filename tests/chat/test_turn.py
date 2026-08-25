@@ -73,7 +73,10 @@ def test_t2_plano_com_duvida_recusa_sem_executar(paths):
     from pat.chat import ChatService
 
     llm = FakeLLMClient(plan_text=PLANO_COM_DUVIDA)
-    service = ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    service = ChatService(
+        paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF,
+        program_path=False,  # estes testes cobrem o caminho da Fase 3
+    )
     turn = _send(service)
 
     assert llm.roles == ["planner"], "plano recusado nao chega ao escritor"
@@ -95,7 +98,10 @@ def test_t3_warehouse_que_nao_serve_vira_plan_unresolvable(paths):
     from pat.chat import ChatService
 
     llm = FakeLLMClient(plan_text=PLANO_SEM_DADO)
-    service = ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    service = ChatService(
+        paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF,
+        program_path=False,  # estes testes cobrem o caminho da Fase 3
+    )
     turn = _send(service)
 
     assert turn.refusal.kind is RefusalKind.PLAN_UNRESOLVABLE
@@ -114,7 +120,10 @@ def test_t4_planner_error_vira_recusa_nomeada(paths):
     from pat.chat import ChatService
 
     llm = FakeLLMClient(plan_text="isto nao e um plano")
-    service = ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    service = ChatService(
+        paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF,
+        program_path=False,  # estes testes cobrem o caminho da Fase 3
+    )
     turn = _send(service)
 
     assert turn.refusal.kind is RefusalKind.PLANNER_FAILED
@@ -135,7 +144,10 @@ def test_t5_writer_error_nao_cai_para_prosa_deterministica(paths):
     prosa_com_digito = '{"prose": "A margem EBITDA foi de 3.89% no exercicio.",' \
         ' "interpretations": []}'
     llm = FakeLLMClient(prose_text=prosa_com_digito)
-    service = ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    service = ChatService(
+        paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF,
+        program_path=False,  # estes testes cobrem o caminho da Fase 3
+    )
     turn = _send(service)
 
     assert turn.refusal.kind is RefusalKind.WRITER_FAILED
@@ -286,7 +298,10 @@ def test_pergunta_ambigua_vira_recusa_nomeada_e_nao_falha_de_modelo(paths):
     from pat.chat import ChatService
 
     llm = FakeLLMClient(plan_text=PLANO_RECUSA_PURA)
-    service = ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    service = ChatService(
+        paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF,
+        program_path=False,  # estes testes cobrem o caminho da Fase 3
+    )
     state = service.create_session()
     turn = service.send_message(
         ChatRequest(session_id=state.session_id, text="Teria como buscar as demais series?")

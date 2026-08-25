@@ -167,7 +167,21 @@ def llm():
 def service(paths, llm):
     from pat.chat import ChatService
 
-    return ChatService(paths=paths, llm=llm, model="fake-model", default_as_of=AS_OF)
+    # `program_path=False` de proposito: estes testes cobrem o caminho da
+    # Fase 3 - plano + escritor, uma chamada cada -, e o `FakeLLMClient` acima
+    # devolve JSON daquela gramatica. O caminho da Fase 5 tem gramatica propria
+    # e cobertura propria em `tests/chat/test_program_turn.py`.
+    #
+    # Fixar aqui e mais honesto do que mudar o default do servico: o que o
+    # `pat serve` faz por padrao e uma decisao de produto, e nao algo que a
+    # conveniencia de um fixture deva escolher.
+    return ChatService(
+        paths=paths,
+        llm=llm,
+        model="fake-model",
+        default_as_of=AS_OF,
+        program_path=False,
+    )
 
 
 @pytest.fixture

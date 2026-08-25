@@ -57,6 +57,7 @@ DEFAULT_SOURCE = "cvm.dfp"
 __all__ = [
     "DEFAULT_SOURCE",
     "ResearchOutcome",
+    "execute_program",
     "load_envelope",
     "plan_for_question",
     "review_plan",
@@ -306,4 +307,36 @@ def plan_for_question(
         temperature=temperature,
         timeout_s=DEFAULT_TIMEOUT_S if timeout_s is None else timeout_s,
         context=context,
+    )
+
+
+def execute_program(
+    conn,
+    program,
+    *,
+    question,
+    program_id: str,
+    capability_sha256: str,
+    source: str = DEFAULT_SOURCE,
+    git_sha: str | None = None,
+):
+    """Executa um programa, montando o motor aqui.
+
+    Existe para que a camada de chat - e qualquer outra casca - nao precise
+    construir um `Engine`. `research/__init__.py` e a raiz de composicao desta
+    camada, e concentrar a montagem aqui e o que mantem a regra "o chat nao
+    reimplementa o pipeline" verdadeira em codigo, e nao so em prosa.
+
+    E o analogo de `run_plan` para o caminho da Fase 5.
+    """
+    from pat.research.program import run_program
+    from pat.semantics import build_engine
+
+    return run_program(
+        conn,
+        program,
+        engine=build_engine(conn, source=source, git_sha=git_sha),
+        question=question,
+        program_id=program_id,
+        capability_sha256=capability_sha256,
     )
