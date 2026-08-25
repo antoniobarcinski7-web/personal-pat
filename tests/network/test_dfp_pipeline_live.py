@@ -109,7 +109,10 @@ def test_reapresentacao_real_do_gpa_ponta_a_ponta(zips, tmp_path):
             write_facts(conn, facts)
 
         asof = AsOf(conn)
-        chave = dict(cod_cvm=GPA, cd_conta=RECEITA, period_end=FY2023)
+        # `entity_id` desde a M5.6: `cod_cvm` deixou de ser chave de consulta e
+        # virou um identificador entre outros, na tabela `entity`.
+        entity_id = asof.entity_by_local_id("cod_cvm", str(GPA)).entity_id
+        chave = dict(entity_id=entity_id, cd_conta=RECEITA, period_end=FY2023)
 
         original = asof.value(**chave, as_of=date(2024, 6, 30))
         revisado = asof.value(**chave, as_of=date(2025, 6, 30))
@@ -128,10 +131,10 @@ def test_reapresentacao_real_do_gpa_ponta_a_ponta(zips, tmp_path):
 
         # O GPA reapresentou individual e consolidado; sem recorte de escopo a
         # consulta devolve os dois, que e o comportamento correto.
-        assert len(asof.restatements(cod_cvm=GPA, cd_conta=RECEITA, statement="DRE")) == 2
+        assert len(asof.restatements(entity_id=entity_id, cd_conta=RECEITA, statement="DRE")) == 2
 
         (item,) = asof.restatements(
-            cod_cvm=GPA, cd_conta=RECEITA, statement="DRE", consolidated=True
+            entity_id=entity_id, cd_conta=RECEITA, statement="DRE", consolidated=True
         )
         assert item.delta == Decimal("-1457000000")
         assert item.original.fact_id != item.revised.fact_id
