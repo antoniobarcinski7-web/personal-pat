@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from pat.sources.base import DatasetSpec, SourceProvider, UnknownDatasetError
 from pat.sources.public.cvm import CVMProvider
+from pat.sources.public.sec import SECProvider
 
-_PROVIDER_CLASSES: tuple[type[SourceProvider], ...] = (CVMProvider,)
+_PROVIDER_CLASSES: tuple[type[SourceProvider], ...] = (CVMProvider, SECProvider)
 
 
 class Registry:
