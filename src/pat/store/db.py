@@ -118,9 +118,10 @@ CREATE INDEX IF NOT EXISTS idx_silver_company ON silver_line (cod_cvm, cd_conta,
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS gold_fact (
     fact_id            VARCHAR PRIMARY KEY,
+    -- `entity_id` e a UNICA referencia de entidade aqui, e e opaca. Os
+    -- identificadores locais (cod_cvm, cnpj, cik) vivem em `entity`, um por
+    -- jurisdicao. Ver a nota na definicao daquela tabela.
     entity_id          VARCHAR NOT NULL,
-    cod_cvm            INTEGER NOT NULL,
-    denom_cia          VARCHAR NOT NULL,
 
     statement          VARCHAR NOT NULL,
     consolidated       BOOLEAN NOT NULL,
@@ -152,7 +153,7 @@ CREATE TABLE IF NOT EXISTS gold_fact (
 
 -- Suporta o predicado central do AS OF: chave logica + corte por conhecimento.
 CREATE INDEX IF NOT EXISTS idx_gold_asof
-    ON gold_fact (cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end, knowledge_date);
+    ON gold_fact (entity_id, statement, consolidated, cd_conta, coluna_df, period_end, knowledge_date);
 
 -- ---------------------------------------------------------------------------
 -- RESEARCH_RUN: manifesto de uma execucao de pesquisa (Fase 3).
@@ -358,6 +359,45 @@ CREATE TABLE IF NOT EXISTS document_unit_token (
 
 CREATE INDEX IF NOT EXISTS idx_unit_token_lookup
     ON document_unit_token (index_version, token);
+
+-- ---------------------------------------------------------------------------
+-- ENTITY (Fase 5, M5.6): a entidade universal, e seus nomes por regime.
+--
+-- Ate a M5.6 `gold_fact` carregava `cod_cvm` e `denom_cia` como colunas
+-- obrigatorias - um endereco de REGIME dentro da tabela universal de fatos, o
+-- mesmo erro de categoria que citar `cd_conta` em `concepts.py` seria.
+-- Funcionava enquanto so existia o Brasil e quebrava na primeira companhia
+-- americana, que nao tem `cod_cvm` nenhum.
+--
+-- Agora o fato guarda so `entity_id`. Uma jurisdicao nova nao pede coluna
+-- nova aqui: pede uma LINHA. Era a terceira coluna que denunciaria o desenho
+-- anterior, e ela nunca vai existir.
+--
+-- Uma entidade pode ter varias linhas: CNPJ e cod_cvm no Brasil, CIK e ticker
+-- nos EUA. `is_primary` marca a canonica da jurisdicao; as outras sao apelidos
+-- uteis para quem digita na linha de comando.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS entity (
+    entity_id     VARCHAR NOT NULL,
+    jurisdiction  VARCHAR NOT NULL,
+    scheme        VARCHAR NOT NULL,
+    local_id      VARCHAR NOT NULL,
+    display_name  VARCHAR NOT NULL,
+    is_primary    BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (entity_id, scheme)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_lookup
+    ON entity (scheme, local_id);
+
+-- Migracoes aplicadas. Explicita e versionada: uma migracao que nao deixa
+-- rastro nao da para auditar depois, e a pergunta "este banco ja passou pela
+-- M5.6?" precisa ter resposta sem inspecionar colunas.
+CREATE TABLE IF NOT EXISTS schema_migration (
+    migration_id VARCHAR PRIMARY KEY,
+    applied_at   TIMESTAMPTZ NOT NULL,
+    notes        VARCHAR
+);
 """
 
 
@@ -366,5 +406,108 @@ def connect(path: Path, *, read_only: bool = False) -> duckdb.DuckDBPyConnection
     return duckdb.connect(str(path), read_only=read_only)
 
 
+M56_ENTITY = "m5.6-entity-universal"
+
+
 def migrate(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(SCHEMA_SQL)
+    _migrate_entity_out_of_gold(conn)
+
+
+def _migrate_entity_out_of_gold(conn: duckdb.DuckDBPyConnection) -> None:
+    """Tira `cod_cvm` e `denom_cia` de `gold_fact` e os move para `entity`.
+
+    Deterministica e idempotente: roda uma vez, deixa rastro em
+    `schema_migration`, e nao faz nada nas execucoes seguintes.
+
+    Preserva os fatos sem alteracao semantica. `fact_id`, `value`,
+    `knowledge_date`, `period_end` e toda a linhagem ficam intactos - o que sai
+    sao duas colunas que descreviam a ENTIDADE, e nao o fato. Um banco vazio
+    (o caso de `pat init` e de todo teste) passa por aqui sem tocar em nada.
+
+    O gold e derivado: se algo desse errado, `pat build` o reconstroi a partir
+    do bronze, que e imutavel. Por isso a migracao pode ser direta em vez de
+    copiar a tabela inteira para o lado.
+    """
+    ja_aplicada = conn.execute(
+        "SELECT COUNT(*) FROM schema_migration WHERE migration_id = ?", [M56_ENTITY]
+    ).fetchone()[0]
+    if ja_aplicada:
+        return
+
+    # `PRAGMA table_info` devolve (cid, name, type, notnull, dflt, pk): o NOME
+    # esta na posicao 1, e nao na 0. Ler a posicao errada faria a migracao
+    # concluir que ja estava aplicada e nao fazer nada - falha silenciosa numa
+    # migracao, que e o pior lugar possivel para uma.
+    colunas = {
+        linha[1]
+        for linha in conn.execute("PRAGMA table_info('gold_fact')").fetchall()
+    }
+    if "cod_cvm" not in colunas:
+        # Banco criado ja no esquema novo. Registra assim mesmo, para que a
+        # pergunta "este banco passou pela M5.6?" tenha resposta uniforme.
+        _record_migration(conn, "esquema ja nasceu sem cod_cvm em gold_fact")
+        return
+
+    # `max()` e determinista aqui porque todas as linhas de uma entidade
+    # carregam o mesmo par - a CVM publica um cadastro por companhia. Se algum
+    # dia divergir, a contagem abaixo acusa.
+    divergentes = conn.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT entity_id FROM gold_fact
+            GROUP BY entity_id
+            HAVING COUNT(DISTINCT cod_cvm) > 1 OR COUNT(DISTINCT denom_cia) > 1
+        )
+        """
+    ).fetchone()[0]
+    if divergentes:
+        raise RuntimeError(
+            f"{divergentes} entidade(s) com cod_cvm ou denom_cia divergente entre "
+            "fatos. A migracao pararia com dois nomes para a mesma empresa, e "
+            "escolher um em silencio seria inventar identidade."
+        )
+
+    conn.execute(
+        """
+        INSERT INTO entity (entity_id, jurisdiction, scheme, local_id, display_name, is_primary)
+        SELECT entity_id, 'BR', 'cnpj',
+               regexp_extract(entity_id, 'br:cnpj:(\\d+)', 1),
+               MAX(denom_cia), TRUE
+        FROM gold_fact
+        WHERE entity_id LIKE 'br:cnpj:%'
+        GROUP BY entity_id
+        ON CONFLICT (entity_id, scheme) DO NOTHING
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO entity (entity_id, jurisdiction, scheme, local_id, display_name, is_primary)
+        SELECT entity_id, 'BR', 'cod_cvm', CAST(MAX(cod_cvm) AS VARCHAR),
+               MAX(denom_cia), FALSE
+        FROM gold_fact
+        GROUP BY entity_id
+        ON CONFLICT (entity_id, scheme) DO NOTHING
+        """
+    )
+
+    # O indice antigo chaveava por `cod_cvm` e impede o DROP. Ele e derivado -
+    # `SCHEMA_SQL` ja recriou o equivalente por `entity_id` - entao remove-lo
+    # aqui nao perde nada.
+    conn.execute("DROP INDEX IF EXISTS idx_gold_asof")
+    conn.execute("ALTER TABLE gold_fact DROP COLUMN cod_cvm")
+    conn.execute("ALTER TABLE gold_fact DROP COLUMN denom_cia")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gold_asof ON gold_fact "
+        "(entity_id, statement, consolidated, cd_conta, coluna_df, period_end, knowledge_date)"
+    )
+    _record_migration(conn, "cod_cvm e denom_cia movidos de gold_fact para entity")
+
+
+def _record_migration(conn: duckdb.DuckDBPyConnection, notes: str) -> None:
+    from datetime import UTC, datetime
+
+    conn.execute(
+        "INSERT INTO schema_migration (migration_id, applied_at, notes) VALUES (?, ?, ?)",
+        [M56_ENTITY, datetime.now(UTC), notes],
+    )

@@ -53,11 +53,31 @@ class CvmDfpResolver:
             self._entities[entity_id] = self._asof.entity(entity_id)
         return self._entities[entity_id]
 
+    def _has_any_fact(self, entity_id: str) -> bool:
+        return bool(
+            self._asof.conn.execute(
+                "SELECT 1 FROM gold_fact WHERE entity_id = ? LIMIT 1", [entity_id]
+            ).fetchone()
+        )
+
     def entity_display(self, entity_id: str) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+        """Nome e identificadores LOCAIS, que e o que este adapter pode dizer.
+
+        Continua devolvendo `cod_cvm` porque este e o adapter da CVM - aqui
+        identificador de regime e o assunto. O que mudou na M5.6 e a origem:
+        ele vem da tabela `entity`, e nao de uma coluna do fato.
+        """
         ref = self._entity(entity_id)
         if ref is None:
             return None, ()
-        return ref.denom_cia, (("cod_cvm", str(ref.cod_cvm)),)
+        locais = tuple(
+            (linha[0], linha[1])
+            for linha in self._asof.conn.execute(
+                "SELECT scheme, local_id FROM entity WHERE entity_id = ? ORDER BY scheme",
+                [entity_id],
+            ).fetchall()
+        )
+        return ref.display_name, locais
 
     def resolve(
         self,
@@ -69,18 +89,15 @@ class CvmDfpResolver:
         scope: ReportingScope,
         as_of: date,
     ) -> ResolvedFact | ResolutionFailure:
+        # O nome e BEST-EFFORT e nao participa da resolucao. Fazer a busca de
+        # um fato depender da tabela de nomes seria acoplar dado a rotulo: o
+        # fato existe tendo ou nao alguem registrado como a empresa se chama.
         ref = self._entity(entity_id)
-        if ref is None:
-            return ResolutionFailure(
-                UnavailableReason.UNKNOWN_ENTITY,
-                f"nenhum fato no gold para entity_id={entity_id}. "
-                "Rode `pat build cvm.dfp` para esta companhia.",
-            )
 
         statement, cd_conta, coluna_df = parts_of(address)
 
         view = self._asof.value(
-            cod_cvm=ref.cod_cvm,
+            entity_id=entity_id,
             cd_conta=cd_conta,
             period_end=period_end,
             as_of=as_of,
@@ -90,10 +107,20 @@ class CvmDfpResolver:
         )
         if view is None:
             escopo = "consolidado" if scope is ReportingScope.CONSOLIDATED else "individual"
+            # Duas ausencias diferentes, e a mensagem diz qual. Ate a M5.6 as
+            # duas saiam iguais, e "a empresa nao existe" se confundia com
+            # "esta linha nao foi publicada neste periodo" - remedios opostos.
+            if not self._has_any_fact(entity_id):
+                return ResolutionFailure(
+                    UnavailableReason.UNKNOWN_ENTITY,
+                    f"nenhum fato no gold para entity_id={entity_id}. "
+                    "Rode `pat build cvm.dfp` para esta companhia.",
+                )
+            nome = ref.display_name if ref else entity_id
             return ResolutionFailure(
                 UnavailableReason.MISSING_FACT_AS_OF,
                 f"nada conhecido em {as_of} para {statement}/{cd_conta} "
-                f"({escopo}) de {ref.denom_cia} no exercicio findo em {period_end}",
+                f"({escopo}) de {nome} no exercicio findo em {period_end}",
             )
 
         expected = _EXPECTED_PERIOD_TYPE[period_kind]

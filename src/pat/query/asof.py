@@ -38,8 +38,6 @@ DEFAULT_STATEMENT = "DRE"
 class FactView:
     fact_id: str
     entity_id: str
-    cod_cvm: int
-    denom_cia: str
     statement: str
     consolidated: bool
     coluna_df: str
@@ -68,11 +66,17 @@ class FactView:
 
 @dataclass(frozen=True)
 class EntityRef:
-    """Identificadores de uma companhia presente no gold."""
+    """Uma companhia presente no gold, e como ela se chama.
+
+    `entity_id` e opaco e universal; `display_name` e o rotulo corrente. Os
+    identificadores locais - cod_cvm, CNPJ, CIK - moram em `entity`, um por
+    regime, e nao aparecem aqui: um recorte universal que carregasse `cod_cvm`
+    seria a mesma volta ao problema que a M5.6 desfez.
+    """
 
     entity_id: str
-    cod_cvm: int
-    denom_cia: str
+    jurisdiction: str
+    display_name: str
 
 
 @dataclass(frozen=True)
@@ -85,8 +89,8 @@ class EntityCoverage:
     """
 
     entity_id: str
-    cod_cvm: int
-    denom_cia: str
+    jurisdiction: str
+    display_name: str
     period_ends: tuple[date, ...]
     consolidated_scopes: tuple[bool, ...]
     earliest_knowledge_date: date
@@ -97,8 +101,7 @@ class EntityCoverage:
 class Restatement:
     """Duas versoes conhecidas do mesmo periodo, com valores diferentes."""
 
-    cod_cvm: int
-    denom_cia: str
+    entity_id: str
     statement: str
     consolidated: bool
     coluna_df: str
@@ -149,7 +152,7 @@ class DocumentProvenance:
         return bronze_root / self.storage_path
 
 
-_FACT_COLUMNS = """fact_id, entity_id, cod_cvm, denom_cia, statement, consolidated,
+_FACT_COLUMNS = """fact_id, entity_id, statement, consolidated,
            coluna_df, cd_conta, ds_conta, period_type, period_start, period_end,
            knowledge_date, value, unit, currency, ordem_exerc,
            source_doc_id, source_doc_version, content_sha256, retrieval_id,
@@ -162,7 +165,7 @@ _SELECT = f"""
 """
 
 _KEY_PREDICATE = """
-    WHERE cod_cvm = ?
+    WHERE entity_id = ?
       AND statement = ?
       AND consolidated = ?
       AND cd_conta = ?
@@ -186,7 +189,7 @@ class AsOf:
     def value(
         self,
         *,
-        cod_cvm: int,
+        entity_id: str,
         cd_conta: str,
         period_end: date,
         as_of: date,
@@ -198,14 +201,14 @@ class AsOf:
         conhecido naquela data."""
         row = self.conn.execute(
             f"{_SELECT} {_KEY_PREDICATE} AND knowledge_date <= ? {_ORDER} LIMIT 1",
-            [cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end, as_of],
+            [entity_id, statement, consolidated, cd_conta, coluna_df, period_end, as_of],
         ).fetchone()
         return _to_view(row) if row else None
 
     def latest(
         self,
         *,
-        cod_cvm: int,
+        entity_id: str,
         cd_conta: str,
         period_end: date,
         statement: str = DEFAULT_STATEMENT,
@@ -215,7 +218,7 @@ class AsOf:
         """Valor mais recente conhecido hoje. Atalho explicito para
         `value(as_of=hoje)` - nunca um caminho que ignora o eixo temporal."""
         return self.value(
-            cod_cvm=cod_cvm,
+            entity_id=entity_id,
             cd_conta=cd_conta,
             period_end=period_end,
             as_of=date.today(),
@@ -227,7 +230,7 @@ class AsOf:
     def history(
         self,
         *,
-        cod_cvm: int,
+        entity_id: str,
         cd_conta: str,
         period_end: date,
         statement: str = DEFAULT_STATEMENT,
@@ -238,14 +241,14 @@ class AsOf:
         rows = self.conn.execute(
             f"{_SELECT} {_KEY_PREDICATE} "
             "ORDER BY knowledge_date ASC, source_doc_version ASC, fact_id ASC",
-            [cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end],
+            [entity_id, statement, consolidated, cd_conta, coluna_df, period_end],
         ).fetchall()
         return [_to_view(row) for row in rows]
 
     def restatements(
         self,
         *,
-        cod_cvm: int | None = None,
+        entity_id: str | None = None,
         cd_conta: str | None = None,
         statement: str | None = None,
         consolidated: bool | None = None,
@@ -263,9 +266,9 @@ class AsOf:
         """
         filters: list[str] = []
         params: list[object] = []
-        if cod_cvm is not None:
-            filters.append("cod_cvm = ?")
-            params.append(cod_cvm)
+        if entity_id is not None:
+            filters.append("entity_id = ?")
+            params.append(entity_id)
         if cd_conta is not None:
             filters.append("cd_conta = ?")
             params.append(cd_conta)
@@ -279,20 +282,20 @@ class AsOf:
 
         keys = self.conn.execute(
             f"""
-            SELECT cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end
+            SELECT entity_id, statement, consolidated, cd_conta, coluna_df, period_end
             FROM gold_fact
             {where}
-            GROUP BY cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end
+            GROUP BY entity_id, statement, consolidated, cd_conta, coluna_df, period_end
             HAVING COUNT(DISTINCT value) > 1
-            ORDER BY cod_cvm, statement, consolidated, cd_conta, coluna_df, period_end
+            ORDER BY entity_id, statement, consolidated, cd_conta, coluna_df, period_end
             """,
             params,
         ).fetchall()
 
         out: list[Restatement] = []
-        for cod, stmt, con, conta, coluna, period_end in keys:
+        for ent, stmt, con, conta, coluna, period_end in keys:
             versions = self.history(
-                cod_cvm=cod,
+                entity_id=ent,
                 cd_conta=conta,
                 period_end=period_end,
                 statement=stmt,
@@ -303,8 +306,7 @@ class AsOf:
             if original.value == revised.value:
                 continue
             restatement = Restatement(
-                cod_cvm=cod,
-                denom_cia=revised.denom_cia,
+                entity_id=ent,
                 statement=stmt,
                 consolidated=con,
                 coluna_df=coluna,
@@ -322,36 +324,41 @@ class AsOf:
         return out
 
     def entity(self, entity_id: str) -> EntityRef | None:
-        """Traduz a chave canonica interna para os identificadores da CVM.
+        """A entidade, se ela for CONHECIDA - ter fato e outra pergunta.
 
-        Existe para que a camada semantica possa falar so `entity_id` e ainda
-        assim chegar ao gold, sem que ela mesma emita SQL: toda leitura do gold
-        continua passando por esta classe.
+        Le `entity`, e nao `gold_fact`. A diferenca e o ponto da M5.6: uma
+        empresa registrada e sem fatos e uma coisa (ingestao pendente); uma
+        empresa que nao existe no sistema e outra (identificador errado). Ate
+        aqui as duas devolviam `None`, e a segunda se disfarcava de primeira.
         """
         row = self.conn.execute(
             """
-            SELECT entity_id, cod_cvm, denom_cia
-            FROM gold_fact
-            WHERE entity_id = ?
-            ORDER BY knowledge_date DESC, fact_id ASC
-            LIMIT 1
+            SELECT entity_id, ANY_VALUE(jurisdiction),
+                   ARG_MAX(display_name, CAST(is_primary AS INTEGER))
+            FROM entity WHERE entity_id = ? GROUP BY entity_id
             """,
             [entity_id],
         ).fetchone()
         return EntityRef(*row) if row else None
 
-    def entity_by_cod_cvm(self, cod_cvm: int) -> EntityRef | None:
-        """Caminho inverso de `entity`, para a linha de comando: o usuario
-        pensa em codigo CVM, o sistema pensa em `entity_id`."""
+    def entity_by_local_id(self, scheme: str, local_id: str) -> EntityRef | None:
+        """Identificador de regime -> entidade. A porta unica da linha de comando.
+
+        `--cod-cvm 9512` e `--cik 50863` entram por aqui e viram `entity_id`
+        antes de tocar em qualquer consulta de fato. E o que impede a segunda
+        jurisdicao de espalhar `cik` pelo sistema do jeito que `cod_cvm` estava
+        espalhado ate a M5.6.
+        """
         row = self.conn.execute(
             """
-            SELECT entity_id, cod_cvm, denom_cia
-            FROM gold_fact
-            WHERE cod_cvm = ?
-            ORDER BY knowledge_date DESC, fact_id ASC
-            LIMIT 1
+            SELECT e.entity_id, ANY_VALUE(e2.jurisdiction),
+                   ARG_MAX(e2.display_name, CAST(e2.is_primary AS INTEGER))
+            FROM entity e
+            JOIN entity e2 ON e2.entity_id = e.entity_id
+            WHERE e.scheme = ? AND e.local_id = ?
+            GROUP BY e.entity_id
             """,
-            [cod_cvm],
+            [scheme, str(local_id)],
         ).fetchone()
         return EntityRef(*row) if row else None
 
@@ -362,15 +369,17 @@ class AsOf:
         diferente da de hoje, e um catalogo que ignorasse isso deixaria alguem
         planejar sobre um periodo que ainda nao era publico naquela data.
         """
-        predicate = "WHERE knowledge_date <= ?" if as_of is not None else ""
+        predicate = "WHERE g.knowledge_date <= ?" if as_of is not None else ""
         params = [as_of] if as_of is not None else []
         rows = self.conn.execute(
             f"""
-            SELECT entity_id, max(cod_cvm), max(denom_cia)
-            FROM gold_fact
+            SELECT g.entity_id, ANY_VALUE(e.jurisdiction),
+                   ARG_MAX(e.display_name, CAST(e.is_primary AS INTEGER))
+            FROM gold_fact g
+            JOIN entity e ON e.entity_id = g.entity_id
             {predicate}
-            GROUP BY entity_id
-            ORDER BY entity_id
+            GROUP BY g.entity_id
+            ORDER BY g.entity_id
             """,
             params,
         ).fetchall()
@@ -389,15 +398,28 @@ class AsOf:
             params.append(as_of)
         row = self.conn.execute(
             f"""
-            SELECT max(cod_cvm), max(denom_cia),
-                   min(knowledge_date), max(knowledge_date)
+            SELECT COUNT(*), min(knowledge_date), max(knowledge_date)
             FROM gold_fact
             WHERE entity_id = ? {predicate}
             """,
             params,
         ).fetchone()
-        if row is None or row[0] is None:
+
+        # O SENTINEL SILENCIOSO MORREU AQUI.
+        #
+        # Ate a M5.6 a condicao era `row[0] is None`, com `row[0] = max(cod_cvm)`.
+        # Funcionava por acidente: no Brasil todo fato tem cod_cvm, entao nulo
+        # so acontecia quando nao havia fato nenhum. Uma companhia americana
+        # teria cod_cvm nulo COM fatos, e desapareceria - sem erro, sem aviso,
+        # como se nunca tivesse sido ingerida.
+        #
+        # Agora a pergunta e a que sempre deveria ter sido: ha fato? `None`
+        # significa "sem cobertura", e nada mais. Quem quiser distinguir
+        # "entidade desconhecida" de "entidade sem fatos" chama `entity()`, que
+        # le a tabela de entidades e responde exatamente isso.
+        if row is None or not row[0]:
             return None
+        identidade = self.entity(entity_id)
 
         periods = self.conn.execute(
             f"""
@@ -418,18 +440,18 @@ class AsOf:
 
         return EntityCoverage(
             entity_id=entity_id,
-            cod_cvm=row[0],
-            denom_cia=row[1],
+            jurisdiction=identidade.jurisdiction if identidade else "??",
+            display_name=identidade.display_name if identidade else entity_id,
             period_ends=tuple(p[0] for p in periods),
             consolidated_scopes=tuple(s[0] for s in scopes),
-            earliest_knowledge_date=row[2],
-            latest_knowledge_date=row[3],
+            earliest_knowledge_date=row[1],
+            latest_knowledge_date=row[2],
         )
 
     def accounts(
         self,
         *,
-        cod_cvm: int,
+        entity_id: str,
         statement: str,
         period_end: date,
         as_of: date,
@@ -451,12 +473,12 @@ class AsOf:
                            ORDER BY knowledge_date DESC, source_doc_version DESC, fact_id ASC
                        ) AS rn
                 FROM gold_fact
-                WHERE cod_cvm = ? AND statement = ? AND consolidated = ?
+                WHERE entity_id = ? AND statement = ? AND consolidated = ?
                   AND period_end = ? AND knowledge_date <= ?
             ) WHERE rn = 1
             ORDER BY cd_conta, coluna_df
             """,
-            [cod_cvm, statement, consolidated, period_end, as_of],
+            [entity_id, statement, consolidated, period_end, as_of],
         ).fetchall()
         return [_to_view(row[:-1]) for row in rows]
 

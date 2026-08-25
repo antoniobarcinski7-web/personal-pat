@@ -77,7 +77,12 @@ class BuildStats:
 @dataclass(frozen=True)
 class GoldFact:
     """Fato validado mais os campos especificos da CVM que o contrato
-    universal nao carrega (documento de origem, eixo ULTIMO/PENULTIMO)."""
+    universal nao carrega (documento de origem, eixo ULTIMO/PENULTIMO).
+
+    `cod_cvm` e `denom_cia` continuam AQUI, e nao na tabela de fatos: eles vem
+    da linha silver e sao o insumo com que o builder popula `entity`. O que
+    mudou na M5.6 e o destino deles, nao a origem - identificador de regime
+    descreve a entidade, e a entidade tem tabela propria."""
 
     fact: Fact
     cod_cvm: int
@@ -177,11 +182,13 @@ def build_facts(lines: Sequence[AccountLine]) -> tuple[list[GoldFact], BuildStat
     return facts, stats
 
 
+# `cod_cvm` e `denom_cia` sairam daqui na M5.6: eles descrevem a ENTIDADE, e
+# nao o fato. Vao para a tabela `entity`, uma linha por regime. O que resta
+# nesta tupla ou e universal (periodo, valor, linhagem) ou e endereco dentro do
+# documento de origem, que e do fato mesmo.
 _COLUMNS = (
     "fact_id",
     "entity_id",
-    "cod_cvm",
-    "denom_cia",
     "statement",
     "consolidated",
     "coluna_df",
@@ -213,9 +220,54 @@ _INSERT = (
 )
 
 
+def identities_from(facts: Sequence[GoldFact]) -> list["EntityIdentity"]:
+    """Fatos da CVM -> identidades de entidade, deduplicadas.
+
+    Duas por companhia: o CNPJ, que e o identificador canonico brasileiro e
+    de onde `entity_id` deriva, e o `cod_cvm`, que e o apelido com que a CVM
+    publica e com que um humano digita na linha de comando.
+
+    O `entity_id` NAO e recalculado aqui - vem do fato, que ja o carrega. Uma
+    segunda derivacao seria uma segunda fonte de verdade para a identidade da
+    empresa, e as duas divergiriam no dia em que uma delas mudasse de regra.
+    """
+    from pat.contracts.entities import EntityIdentity
+
+    vistos: dict[tuple[str, str], EntityIdentity] = {}
+    for g in facts:
+        cnpj = g.fact.entity_id.removeprefix("br:cnpj:")
+        for scheme, local_id, primario in (
+            ("cnpj", cnpj, True),
+            ("cod_cvm", str(g.cod_cvm), False),
+        ):
+            chave = (g.fact.entity_id, scheme)
+            if chave in vistos:
+                continue
+            vistos[chave] = EntityIdentity(
+                entity_id=g.fact.entity_id,
+                jurisdiction="BR",
+                scheme=scheme,
+                local_id=local_id,
+                display_name=g.denom_cia,
+                is_primary=primario,
+            )
+    return list(vistos.values())
+
+
 def write_facts(conn: duckdb.DuckDBPyConnection, facts: Sequence[GoldFact]) -> int:
+    """Grava os fatos E as entidades que eles descrevem, nesta ordem.
+
+    As duas juntas de proposito: um fato cujo `entity_id` nao resolve para
+    nenhuma entidade e o desaparecimento silencioso que a M5.6 existe para
+    impedir, e separar as chamadas deixaria esse estado alcancavel por
+    esquecimento. Aqui ele nao e alcancavel.
+    """
     if not facts:
         return 0
+
+    from pat.store.entity import upsert_identities
+
+    upsert_identities(conn, identities_from(facts))
 
     before = conn.execute("SELECT COUNT(*) FROM gold_fact").fetchone()[0]
     conn.executemany(
@@ -224,8 +276,6 @@ def write_facts(conn: duckdb.DuckDBPyConnection, facts: Sequence[GoldFact]) -> i
             [
                 g.fact.fact_id,
                 g.fact.entity_id,
-                g.cod_cvm,
-                g.denom_cia,
                 g.statement,
                 g.consolidated,
                 g.coluna_df,

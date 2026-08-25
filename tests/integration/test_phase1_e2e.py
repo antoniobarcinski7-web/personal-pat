@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import ClassVar
 
 import pytest
-from tests.conftest import DocumentSpec, LineSpec, ZipSpec, build_dfp_zip, restatement_fixture
+from tests.conftest import CNPJ_DIGITS, DocumentSpec, LineSpec, ZipSpec, build_dfp_zip, restatement_fixture
 
 from pat.audit.run import new_run
 from pat.build import BuildError, build_dataset
@@ -39,7 +39,7 @@ from pat.store.silver import count as silver_count
 
 COD_CVM = 99999
 FY2023 = date(2023, 12, 31)
-CHAVE = dict(cod_cvm=COD_CVM, cd_conta="3.01", period_end=FY2023)
+CHAVE = dict(entity_id=f"br:cnpj:{CNPJ_DIGITS}", cd_conta="3.01", period_end=FY2023)
 
 MIL = Decimal(1000)
 ORIGINAL = Decimal(1000) * MIL  # 1.000 mil, em BRL
@@ -165,7 +165,10 @@ def test_documento_vira_fato_com_linhagem_ate_o_byte(lab):
 
     view = lab.asof.value(**CHAVE, as_of=date(2024, 6, 30))
     assert view.value == ORIGINAL
-    assert view.denom_cia == "COMPANHIA DE TESTE S.A."
+    # O nome saiu do fato e foi para a entidade: `FactView` carrega
+    # `entity_id`, e o rotulo se pergunta a `entity()`.
+    assert view.entity_id == f"br:cnpj:{CNPJ_DIGITS}"
+    assert lab.asof.entity(view.entity_id).display_name == "COMPANHIA DE TESTE S.A."
 
     prov = lab.asof.provenance(view.fact_id)
     assert prov.content_sha256 == outcome.document.content_sha256
@@ -229,7 +232,7 @@ def test_reapresentacao_muda_o_valor_sem_apagar_o_passado(lab):
     assert antes.content_sha256 != depois.content_sha256
     assert [v.value for v in lab.asof.history(**CHAVE)] == [ORIGINAL, REVISADO]
 
-    (item,) = lab.asof.restatements(cod_cvm=COD_CVM)
+    (item,) = lab.asof.restatements(entity_id=f"br:cnpj:{CNPJ_DIGITS}")
     assert (item.original.value, item.revised.value) == (ORIGINAL, REVISADO)
     assert item.delta == Decimal("-100000")
     assert item.delta_pct == Decimal("-10")
@@ -246,7 +249,7 @@ def test_o_ano_corrente_da_dfp_2024_nao_e_afetado(lab):
     lab.build("2024")
 
     view = lab.asof.value(
-        cod_cvm=COD_CVM, cd_conta="3.01", period_end=date(2024, 12, 31), as_of=date(2025, 6, 30)
+        entity_id=f"br:cnpj:{CNPJ_DIGITS}", cd_conta="3.01", period_end=date(2024, 12, 31), as_of=date(2025, 6, 30)
     )
     assert view.value == Decimal(2000) * MIL
     assert view.ordem_exerc == "ULTIMO"

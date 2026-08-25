@@ -146,8 +146,8 @@ def build_snapshot(
             cards.append(
                 EntityCard(
                     entity_id=ref.entity_id,
-                    cod_cvm=ref.cod_cvm,
-                    denom_cia=ref.denom_cia,
+                    jurisdiction=ref.jurisdiction,
+                    display_name=ref.display_name,
                     period_ends=cover.period_ends,
                     scopes=tuple(
                         ReportingScope.CONSOLIDATED if flag else ReportingScope.PARENT_ONLY

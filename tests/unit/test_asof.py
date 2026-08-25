@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from tests.conftest import account_line
+from tests.conftest import CNPJ_DIGITS, account_line
 
 from pat.query.asof import AsOf
 from pat.store.gold import build_facts, write_facts
@@ -36,7 +36,9 @@ def asof(warehouse):
     return AsOf(warehouse)
 
 
-CHAVE = dict(cod_cvm=99999, cd_conta="3.01", period_end=date(2023, 12, 31))
+ENTITY_ID = f"br:cnpj:{CNPJ_DIGITS}"
+
+CHAVE = dict(entity_id=ENTITY_ID, cd_conta="3.01", period_end=date(2023, 12, 31))
 
 
 # -- o eixo de conhecimento -------------------------------------------------
@@ -115,7 +117,7 @@ def test_componentes_do_pl_nao_colapsam_na_mesma_chave(warehouse):
     _grava(warehouse, silver_id="2" * 32, vl_conta=REVISADO, coluna_df="Reservas de Lucro", **comum)
     asof = AsOf(warehouse)
 
-    chave = dict(cod_cvm=99999, cd_conta="5.01", period_end=date(2023, 12, 31), statement="DMPL")
+    chave = dict(entity_id=ENTITY_ID, cd_conta="5.01", period_end=date(2023, 12, 31), statement="DMPL")
     assert asof.value(**chave, as_of=date(2025, 1, 1), coluna_df="Capital Social").value == (
         ORIGINAL * 1000
     )
@@ -165,8 +167,9 @@ def test_filtro_por_magnitude_minima(asof):
 
 
 def test_filtros_de_recorte_da_busca_por_restatements(asof):
-    assert len(asof.restatements(cod_cvm=99999)) == 1
-    assert asof.restatements(cod_cvm=1) == []
+    assert len(asof.restatements(entity_id=ENTITY_ID)) == 1
+    # Entidade que nao existe: recorte vazio, e nao a lista inteira.
+    assert asof.restatements(entity_id="br:cnpj:00000000000000") == []
     assert len(asof.restatements(cd_conta="3.01", statement="DRE")) == 1
     assert asof.restatements(cd_conta="3.99") == []
 

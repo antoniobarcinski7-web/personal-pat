@@ -73,8 +73,8 @@ def snapshot() -> CapabilitySnapshot:
         entities=(
             EntityCard(
                 entity_id=GPA,
-                cod_cvm=14826,
-                denom_cia="CIA BRASILEIRA DE DISTRIBUICAO",
+                jurisdiction="BR",
+                display_name="CIA BRASILEIRA DE DISTRIBUICAO",
                 period_ends=(date(2023, 12, 31), date(2024, 12, 31)),
                 scopes=(ReportingScope.CONSOLIDATED,),
                 has_own_mapping=True,

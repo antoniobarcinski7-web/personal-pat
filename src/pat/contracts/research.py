@@ -264,11 +264,16 @@ class MappingCard(Frozen):
 
 
 class EntityCard(Frozen):
-    """Quais periodos e escopos existem - nunca que valores existem."""
+    """Quais periodos e escopos existem - nunca que valores existem.
+
+    Carrega `jurisdiction` e `display_name`, e nao `cod_cvm`: identificador de
+    regime nao entra no retrato universal do que o sistema sabe fazer, pela
+    mesma razao que `MappingCard` carrega `concept_id` e nunca `LineAddress`.
+    """
 
     entity_id: str
-    cod_cvm: int | None = None
-    denom_cia: str | None = None
+    jurisdiction: str = "??"
+    display_name: str | None = None
     period_ends: tuple[date, ...] = ()
     scopes: tuple[ReportingScope, ...] = ()
     has_own_mapping: bool = False

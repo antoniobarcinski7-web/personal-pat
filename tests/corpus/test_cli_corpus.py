@@ -28,7 +28,7 @@ def home(tmp_path, monkeypatch):
     """PAT_HOME completo: bronze com o blob, warehouse com fato e corpus.
 
     O fato no gold existe porque `pat docs` e `pat evidence` resolvem a
-    empresa por `cod_cvm` atraves do gold - o corpus qualitativo se pendura na
+    empresa por `cod_cvm` atraves da tabela `entity` - o corpus se pendura na
     mesma entidade do quantitativo, de proposito. Sem isso as duas metades do
     workspace poderiam divergir sobre quem e a empresa.
     """
@@ -68,19 +68,26 @@ def _semear_gold(conn) -> None:
     conn.execute(
         """
         INSERT INTO gold_fact (
-            fact_id, entity_id, cod_cvm, denom_cia, statement, consolidated,
+            fact_id, entity_id, statement, consolidated,
             coluna_df, cd_conta, ds_conta, period_type, period_start, period_end,
             knowledge_date, value, unit, currency, ordem_exerc, source_doc_id,
             source_doc_version, silver_id, content_sha256, retrieval_id, locator,
             extractor, extractor_version, extraction_run_id
         ) VALUES (
-            'fato-teste', ?, ?, 'PETROLEO BRASILEIRO S.A. PETROBRAS', 'DRE', TRUE,
+            'fato-teste', ?, 'DRE', TRUE,
             '', '3.01', 'Receita', 'year', DATE '2023-01-01', DATE '2023-12-31',
             DATE '2024-03-07', 1, 'BRL', 'BRL', 'ULTIMO', 'doc', 1,
             'silver', 'sha', 'ret', 'loc', 'ext', '1', 'run'
         )
         """,
-        [ENTIDADE, COD_CVM],
+        [ENTIDADE],
+    )
+    # A entidade e registrada junto: um fato cujo entity_id nao resolve para
+    # nenhuma entidade e o estado que a M5.6 tornou inalcancavel em producao.
+    conn.execute(
+        "INSERT INTO entity (entity_id, jurisdiction, scheme, local_id, display_name, is_primary)"
+        " VALUES (?, 'BR', 'cod_cvm', ?, 'PETROLEO BRASILEIRO S.A. PETROBRAS', FALSE)",
+        [ENTIDADE, str(COD_CVM)],
     )
 
 

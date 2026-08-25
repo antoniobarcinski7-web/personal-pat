@@ -232,7 +232,7 @@ def _fmt_money(value, unit: str) -> str:
 
 def _print_fact(view, prefix: str = "") -> None:
     escopo = "consolidado" if view.consolidated else "individual"
-    print(f"{prefix}{view.denom_cia} ({view.cod_cvm})")
+    print(f"{prefix}{view.entity_id}")
     print(f"{prefix}  demonstr.  {view.statement} {escopo}")
     print(f"{prefix}  conta      {view.cd_conta}  {view.ds_conta}")
     if view.coluna_df:
@@ -366,7 +366,7 @@ def cmd_restatements(args) -> int:
         escopo = "con" if item.consolidated else "ind"
         coluna = f" [{item.coluna_df}]" if item.coluna_df else ""
         print(
-            f"  {item.denom_cia} ({item.cod_cvm})  {item.statement}/{escopo} "
+            f"  {item.entity_id}  {item.statement}/{escopo} "
             f"{item.cd_conta}{coluna} {item.period_end}"
         )
         print(f"    {item.original.knowledge_date}  {item.original.value / 1000:>18,.0f} mil")
@@ -1050,17 +1050,59 @@ def _print_decomposition(result, denom: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _entity_for_cod_cvm(conn, cod_cvm: int) -> tuple[str, str] | None:
-    ref = AsOf(conn).entity_by_cod_cvm(cod_cvm)
+def _resolve_entity_arg(conn, args) -> tuple[str, str] | None:
+    """`--cod-cvm` / `--cik` -> (entity_id, nome). A PORTA UNICA da CLI.
+
+    Compatibilidade deliberada: o usuario brasileiro pensa em codigo CVM, e
+    tirar `--cod-cvm` quebraria todo comando que ele ja digita. O que a M5.6
+    muda e que ele para AQUI - vira `entity_id` numa funcao so, e nenhuma
+    camada abaixo volta a ver identificador de regime.
+
+    As tres respostas sao distinguiveis, e essa e a razao de a funcao existir:
+    entidade desconhecida, entidade conhecida sem fatos, e entidade pronta. Ate
+    a M5.6 as duas primeiras devolviam a mesma mensagem.
+    """
+    asof = AsOf(conn)
+    cod_cvm = getattr(args, "cod_cvm", None)
+    cik = getattr(args, "cik", None)
+
+    if cod_cvm is not None:
+        scheme, local_id, rotulo = "cod_cvm", str(cod_cvm), f"cod_cvm={cod_cvm}"
+    elif cik is not None:
+        scheme, local_id, rotulo = "cik", str(cik).zfill(10), f"cik={cik}"
+    else:
+        print("informe --cod-cvm ou --cik", file=sys.stderr)
+        return None
+
+    ref = asof.entity_by_local_id(scheme, local_id)
     if ref is None:
         print(
-            f"nenhum fato no gold para cod_cvm={cod_cvm}. "
-            f"Rode `pat build cvm.dfp --cod-cvm {cod_cvm}` primeiro - o corpus "
-            "qualitativo se pendura na mesma entidade do quantitativo.",
+            f"nenhuma entidade conhecida para {rotulo}.\n"
+            "A entidade e registrada durante o build, a partir do que a fonte "
+            "publica. Rode `pat build` para a companhia, ou confira o identificador.",
             file=sys.stderr,
         )
         return None
-    return ref.entity_id, ref.denom_cia
+
+    cobertura = asof.coverage(ref.entity_id)
+    if cobertura is None:
+        print(
+            f"{ref.display_name} ({ref.entity_id}) e conhecida, mas NAO TEM FATOS "
+            f"no gold.\n"
+            "Isso e diferente de nao existir: a entidade esta registrada e a "
+            "ingestao e que falta. Rode `pat build` para o periodo desejado.",
+            file=sys.stderr,
+        )
+        return None
+
+    return ref.entity_id, ref.display_name
+
+
+def _entity_for_cod_cvm(conn, cod_cvm: int) -> tuple[str, str] | None:
+    """Compatibilidade fina sobre `_resolve_entity_arg`."""
+    from argparse import Namespace
+
+    return _resolve_entity_arg(conn, Namespace(cod_cvm=cod_cvm, cik=None))
 
 
 def _kinds(raw: list[str]):
@@ -1368,16 +1410,8 @@ def _scope(args):
 
 
 def _resolve_entity(asof, args) -> tuple[str, str] | None:
-    """(entity_id, denominacao). O usuario fala codigo CVM; o sistema, entity_id."""
-    ref = asof.entity_by_cod_cvm(args.cod_cvm)
-    if ref is None:
-        print(
-            f"nenhum fato no gold para cod_cvm={args.cod_cvm}. "
-            f"Rode `pat build cvm.dfp --cod-cvm {args.cod_cvm}` primeiro.",
-            file=sys.stderr,
-        )
-        return None
-    return ref.entity_id, ref.denom_cia
+    """(entity_id, nome). O usuario fala codigo local; o sistema, entity_id."""
+    return _resolve_entity_arg(asof.conn, args)
 
 
 def cmd_concepts(args) -> int:
@@ -1646,8 +1680,8 @@ def cmd_capability(args) -> int:
         for card in snapshot.entities:
             periodos = ", ".join(str(p) for p in card.period_ends)
             conferido = "mapeamento proprio" if card.has_own_mapping else "familia default"
-            print(f"  {card.entity_id}  ({card.denom_cia})")
-            print(f"    cod_cvm {card.cod_cvm} · {conferido}")
+            print(f"  {card.entity_id}  [{card.jurisdiction}]  ({card.display_name})")
+            print(f"    {card.jurisdiction} · {conferido}")
             print(f"    periodos {periodos}")
         return 0
     finally:

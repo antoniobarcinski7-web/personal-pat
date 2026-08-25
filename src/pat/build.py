@@ -134,6 +134,7 @@ def build_dataset(
         silver_written = silver.write_lines(conn, lines)
 
         facts, build_stats = gold.build_facts(lines)
+        # `write_facts` grava entidade e fato juntos - ver a nota la.
         gold_written = gold.write_facts(conn, facts)
 
         report.resources.append(

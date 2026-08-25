@@ -174,7 +174,7 @@ def test_entities_e_coverage(gpa_conn):
     asof = AsOf(gpa_conn)
     (ref,) = asof.entities()
     assert ref.entity_id == gpa.ENTITY_ID
-    assert ref.cod_cvm == 14826
+    assert ref.display_name == "CIA BRASILEIRA DE DISTRIBUICAO"
 
     cover = asof.coverage(gpa.ENTITY_ID)
     assert cover is not None

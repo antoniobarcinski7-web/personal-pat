@@ -281,7 +281,14 @@ def test_resultado_registra_versao_mapeamento_e_regime(engine):
     assert result.framework == "ifrs_cpc_br"
     assert result.jurisdiction == "BR"
     assert result.scope is CONSOLIDADO
-    assert result.local_ids == (("cod_cvm", "14826"),)
+    # Desde a M5.6 o adapter devolve TODOS os identificadores locais que a
+    # tabela `entity` conhece, e nao so o cod_cvm: no Brasil sao o CNPJ, que e
+    # o canonico, e o cod_cvm, que e o apelido com que a CVM publica. Ambos
+    # sao do regime, e e o adapter do regime que os conhece.
+    assert dict(result.local_ids) == {
+        "cnpj": "47508411000156",
+        "cod_cvm": "14826",
+    }
 
 
 def test_hash_do_mapeamento_cobre_a_cadeia_herdada(engine, tmp_path, make_engine):

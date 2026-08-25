@@ -105,7 +105,7 @@ class ChatService:
 
     def entity_names(self) -> dict[str, str]:
         cards = self.snapshot().entities
-        return {card.entity_id: card.denom_cia for card in cards if card.denom_cia}
+        return {card.entity_id: card.display_name for card in cards if card.display_name}
 
     def capability(self) -> dict:
         """O que o sistema sabe executar, para a UI mostrar antes de perguntar."""
@@ -116,8 +116,8 @@ class ChatService:
             "entities": [
                 {
                     "entity_id": card.entity_id,
-                    "denom_cia": card.denom_cia,
-                    "cod_cvm": card.cod_cvm,
+                    "denom_cia": card.display_name,
+                    "jurisdiction": card.jurisdiction,
                     "period_ends": [p.isoformat() for p in card.period_ends],
                     "scopes": [str(s) for s in card.scopes],
                     "has_own_mapping": card.has_own_mapping,

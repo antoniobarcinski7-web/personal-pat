@@ -25,7 +25,7 @@ _MODEL_FAILURES = (RefusalKind.PLANNER_FAILED, RefusalKind.WRITER_FAILED)
 def turn_view(turn: ChatTurn, *, entity_names: dict[str, str]) -> dict:
     """O turno inteiro, do jeito que a UI o le.
 
-    `entity_names` e um join por `entity_id` sobre `EntityCard.denom_cia` do
+    `entity_names` e um join por `entity_id` sobre `EntityCard.display_name` do
     snapshot - o plano cru nao tem o nome, e a UI precisa dele. Join, e nao
     interpretacao: nenhuma linha aqui escolhe empresa por rotulo.
     """
