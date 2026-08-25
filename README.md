@@ -6,7 +6,7 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5, Milestone 5.5.** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5 concluida (M5.1–M5.6).** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
@@ -17,8 +17,9 @@ evidência — a decomposição quantitativa, que abre a variação de um total 
 partes que a produziram com residual explícito, o programa de pesquisa, que
 junta as duas metades num artefato revisável antes de executar, o grafo de
 afirmações com critic mecânico, em que nenhuma frase existe sem procedência
-tipada, e o Company Workspace, que só se declara pronto quando seis requisitos
-objetivos estão satisfeitos.
+tipada, o Company Workspace, que só se declara pronto quando seis requisitos
+objetivos estão satisfeitos, e a **segunda jurisdição**: SEC/EDGAR, regime
+us-gaap e decomposição por segmento operacional.
 
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
@@ -87,6 +88,7 @@ Duas fronteiras são inegociáveis:
 SourceProvider (ABC)
 ├── PublicSourceProvider        HTTP público, sem credencial
 │   ├── CVMProvider             ✅ Fase 0
+│   ├── SECProvider             ✅ Fase 5 (M5.6)
 │   ├── B3Provider              pendente
 │   ├── BCBProvider             pendente
 │   ├── IBGEProvider            pendente
@@ -133,7 +135,7 @@ CONCEITO     revenue_net, d_and_a_pnl, capex…       universal, sem jurisdiçã
     │
 ENDEREÇO     onde a ideia aparece numa TAXONOMIA
              BR: cvm.plano_padronizado  → DRE/3.01
-             US: us-gaap.xbrl           → us-gaap:Revenue… (não implementado)
+             US: us-gaap.xbrl           → us-gaap:GrossProfit (✅ M5.6)
     ▲
 REGIME       framework · jurisdição · fonte  — metadado do MAPEAMENTO
 ```
@@ -393,6 +395,148 @@ O servidor é `http.server` da biblioteca padrão, escuta só em `127.0.0.1`, n�
 tem autenticação e não deve ser exposto. O log das sessões fica em `data/chat/`
 e é conveniência de UI: apagá-lo não perde nada auditável, porque a auditoria
 mora em `research_run` e `llm_call`.
+
+---
+
+## Segunda jurisdição: SEC e us-gaap — Fase 5, M5.6
+
+```bash
+export PAT_SEC_USER_AGENT="Seu Nome (seu@email)"   # a SEC exige contato; 403 sem ele
+pat company --cik 50863
+pat decompose revenue_by_segment@v1 --cik 50863 --from 2023-12-31 --to 2024-12-31 --as-of 2026-06-30
+```
+
+**Nenhum conceito, métrica ou decomposição mudou para o regime americano
+existir.** `ebitda@v1` foi escrita pensando na CVM e roda sobre a Intel sem uma
+linha de alteração — era o que `test_second_framework.py` prometia com um regime
+fictício desde a Fase 2.
+
+| | Intel FY2023 | Intel FY2024 |
+|---|---|---|
+| receita_liquida@v1 | 54.228 MM USD | 53.101 MM USD |
+| ebit@v1 | 93 MM USD | −11.678 MM USD |
+| d_and_a@v1 | 9.602 MM USD | 11.379 MM USD |
+| **ebitda@v1** | **9.695 MM USD** | **−299 MM USD** |
+
+No mesmo motor, na mesma execução: Petrobras FY2024 em 204.234 MM BRL, regime
+`ifrs_cpc_br/BR`.
+
+### A entidade é universal; o identificador é local
+
+`gold_fact` guarda **só** `entity_id`, opaco. CNPJ, `cod_cvm`, CIK e ticker vivem
+em `entity`, uma linha por regime. Uma jurisdição nova não pede coluna nova —
+pede uma linha. `--cod-cvm` continua existindo por compatibilidade, mas para numa
+porta única e vira `entity_id` ali.
+
+Três ausências que antes se confundiam agora são distinguíveis: entidade
+inexistente, entidade sem fatos, e linha não publicada. Cada uma pede uma ação
+diferente.
+
+### Por que `equivalence_basis` existe
+
+A Intel **não usa** `Revenues`. **Não usa** `CostOfRevenue`. E **não publica**
+`DepreciationDepletionAndAmortization` — reporta D&A em dois elementos separados.
+Um sistema que casasse elemento por semelhança de nome concluiria que a Intel não
+divulga receita, ou acharia algo parecido de outra grandeza e devolveria um
+número errado com confiança.
+
+Não há família us-gaap, de propósito: a CVM padroniza o plano de contas, o
+us-gaap não padroniza a escolha de elemento. Cada emissor americano ganha o seu
+arquivo.
+
+### O eixo SEGMENT
+
+```
+Petrobras → CVM → SEGMENT = NO_BREAKDOWN_SOURCE
+Intel     → SEC → SEGMENT = resolução estruturada, resíduo ZERO
+```
+
+Receita da Intel FY2023→FY2024: All other −1.784, Intel Foundry −1.367, CCG
+**+1.032**, eliminação intersegmento +742, DCAI +182, NEX +68 — soma −1.127,
+resíduo **0**.
+
+**Os membros são declarados no TOML, não descobertos.** A fonte publica os
+membros mas não a hierarquia entre eles. Lado a lado com as folhas, a DERA
+publica um roll-up (`ClientComputingGroupDatacenterAndAIAndNetworkAndEdge` = CCG
++ DCAI + NEX) e um recorte dentro da Foundry. Somar tudo contaria três segmentos
+duas vezes — e o total pareceria plausível.
+
+**A eliminação intersegmento é um membro, não um resíduo.** Sem ela a soma dos
+segmentos excederia a consolidada em 17,2 bi, e esse valor apareceria como "não
+explicado" — o que seria falso: é uma eliminação publicada.
+
+---
+
+## Segunda jurisdição: SEC e us-gaap — Fase 5, M5.6
+
+```bash
+export PAT_SEC_USER_AGENT="Seu Nome (seu@email)"   # a SEC exige contato; 403 sem ele
+pat company --cik 50863
+pat decompose revenue_by_segment@v1 --cik 50863 \
+    --from 2023-12-31 --to 2024-12-31 --as-of 2026-06-30
+```
+
+**Nenhum conceito, métrica ou decomposição mudou para o regime americano
+existir.** `ebitda@v1` foi escrita pensando na CVM e roda sobre a Intel sem uma
+linha de alteração — era o que `test_second_framework.py` prometia com um regime
+fictício desde a Fase 2.
+
+| | Intel FY2023 | Intel FY2024 |
+|---|---|---|
+| receita_liquida@v1 | 54.228 MM USD | 53.101 MM USD |
+| ebit@v1 | 93 MM USD | −11.678 MM USD |
+| d_and_a@v1 | 9.602 MM USD | 11.379 MM USD |
+| **ebitda@v1** | **9.695 MM USD** | **−299 MM USD** |
+
+No mesmo motor, na mesma execução: Petrobras FY2024 em 204.234 MM BRL, regime
+`ifrs_cpc_br/BR`.
+
+### A entidade é universal; o identificador é local
+
+`gold_fact` guarda **só** `entity_id`, opaco. CNPJ, `cod_cvm`, CIK e ticker vivem
+em `entity`, uma linha por regime. Uma jurisdição nova não pede coluna nova —
+pede uma linha. `--cod-cvm` continua existindo por compatibilidade, mas para numa
+porta única e vira `entity_id` ali.
+
+Três ausências que antes se confundiam agora são distinguíveis: entidade
+inexistente, entidade conhecida sem fatos, e linha não publicada. Cada uma pede
+uma ação diferente.
+
+### Por que `equivalence_basis` existe
+
+A Intel **não usa** `Revenues`. **Não usa** `CostOfRevenue`. E **não publica**
+`DepreciationDepletionAndAmortization` — reporta D&A em dois elementos separados.
+Um sistema que casasse elemento por semelhança de nome concluiria que a Intel não
+divulga receita, ou acharia algo parecido de outra grandeza e devolveria um
+número errado com confiança.
+
+Não há família us-gaap, de propósito: a CVM padroniza o plano de contas, o
+us-gaap não padroniza a escolha de elemento. Cada emissor americano ganha o seu
+arquivo.
+
+### O eixo SEGMENT
+
+```
+Petrobras → CVM → SEGMENT = NO_BREAKDOWN_SOURCE
+Intel     → SEC → SEGMENT = resolução estruturada, resíduo ZERO
+```
+
+Receita da Intel FY2023→FY2024: All other −1.784, Intel Foundry −1.367, CCG
+**+1.032**, eliminação intersegmento +742, DCAI +182, NEX +68 — soma −1.127,
+resíduo **0**.
+
+**Os membros são declarados no TOML, não descobertos.** A fonte publica os
+membros mas não a hierarquia entre eles. Lado a lado com as folhas, a DERA
+publica um roll-up (`ClientComputingGroupDatacenterAndAIAndNetworkAndEdge` = CCG
++ DCAI + NEX) e um recorte dentro da Foundry. Somar tudo contaria três segmentos
+duas vezes — e o total pareceria plausível.
+
+**A eliminação intersegmento é um membro, não um resíduo.** Sem ela a soma dos
+segmentos excederia a consolidada em 17,2 bi, e esse valor apareceria como "não
+explicado" — o que seria falso: é uma eliminação publicada.
+
+`pat company` reflete isso: a Intel lista `revenue_by_segment@v1` entre as
+decomposições disponíveis, a Petrobras não.
 
 ---
 
@@ -786,10 +930,10 @@ trecho voltou em primeiro" tem que ter resposta.
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede, sem LLM) — 914 testes
+uv run pytest              # suite padrão (sem rede, sem LLM) — 961 testes
 uv run pytest tests/research  # só a camada de pesquisa — 487
 uv run pytest tests/corpus    # só a camada de corpus — 58
-uv run pytest -m network   # contra a CVM real — 18 testes
+uv run pytest -m network   # contra CVM e SEC reais — 24 testes
 uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
 ```
 
@@ -923,7 +1067,7 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
 | **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
 | **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
-| **5** | Company Research Workspace: corpus qualitativo, decomposição quantitativa, programa de pesquisa, grafo de claims, critic, workspace | Petrobras passa de `DRAFT` a `READY`; `pat run-program --writer --audit` produz relatório em que toda frase tem procedência tipada | 🚧 M5.1–M5.5 |
+| **5** | Company Research Workspace: corpus qualitativo, decomposição, programa de pesquisa, grafo de claims, critic, workspace, segunda jurisdição | Petrobras vai de `DRAFT` a `READY`; `ebitda@v1` computa sobre a Intel via SEC sem que nenhuma métrica mude; receita da Intel decompõe por segmento com resíduo zero | ✅ |
 | **6** | B3 (preços, proventos), BCB, IBGE | | |
 | **7** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 

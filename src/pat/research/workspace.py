@@ -101,12 +101,25 @@ def _quantitative(
     disponiveis: list[str] = []
     from pat.contracts.decomposition import BreakdownAxis
 
+    eixos_declarados = {m.axis for m in (chain.head.segments if chain else ())}
+
     for definition in decompositions.all_definitions():
-        if definition.axis is not BreakdownAxis.COMPONENT:
+        if definition.axis is BreakdownAxis.COMPONENT:
+            precisa = {definition.target_concept, *definition.concept_ids}
+            exigidos.update(precisa)
+            if precisa <= conceitos_ligados:
+                disponiveis.append(definition.ref)
             continue
-        precisa = {definition.target_concept, *definition.concept_ids}
-        exigidos.update(precisa)
-        if precisa <= conceitos_ligados:
+
+        # Eixo dimensional: disponivel quando o mapeamento DECLARA membros
+        # daquele eixo. Sem membros declarados a decomposicao recusa com
+        # NO_BREAKDOWN_SOURCE, e listar como disponivel seria prometer o que o
+        # sistema nao faz - o que e o oposto do que este workspace existe para
+        # fazer.
+        if (
+            definition.member_axis in eixos_declarados
+            and definition.target_concept in conceitos_ligados
+        ):
             disponiveis.append(definition.ref)
 
     faltando = tuple(sorted(exigidos - conceitos_ligados))

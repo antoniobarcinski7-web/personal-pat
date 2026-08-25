@@ -429,7 +429,7 @@ def cmd_company(args) -> int:
     if (conn := _open_readonly(args)) is None:
         return 1
     try:
-        resolvido = _entity_for_cod_cvm(conn, args.cod_cvm)
+        resolvido = _resolve_entity_arg(conn, args)
         if resolvido is None:
             return 1
         entity_id, denom = resolvido
@@ -438,7 +438,7 @@ def cmd_company(args) -> int:
             conn,
             entity_id=entity_id,
             display_name=denom,
-            cod_cvm=args.cod_cvm,
+            cod_cvm=getattr(args, "cod_cvm", None),
             source=DEFAULT_SOURCE,
             as_of=args.as_of,
         )
@@ -2382,7 +2382,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_comp = sub.add_parser(
         "company", help="estado do workspace de uma empresa: o que se sabe e o que falta"
     )
-    p_comp.add_argument("--cod-cvm", type=int, required=True)
+    p_comp.add_argument("--cod-cvm", type=int, help="companhia brasileira (CVM)")
+    p_comp.add_argument("--cik", help="companhia americana (SEC), com ou sem zeros")
     p_comp.add_argument(
         "--as-of", type=date.fromisoformat, default=None,
         help="cobertura conhecida nesta data; sem ela, o acervo inteiro",
@@ -2454,7 +2455,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_dc = sub.add_parser("decompose", help="abre a variacao de um total em contribuicoes")
     p_dc.add_argument("decomposition", help="'nome@versao', ex. ebit_by_line@v1")
-    p_dc.add_argument("--cod-cvm", type=int, required=True)
+    p_dc.add_argument("--cod-cvm", type=int, help="companhia brasileira (CVM)")
+    p_dc.add_argument("--cik", help="companhia americana (SEC)")
     p_dc.add_argument("--from", dest="period_from", type=date.fromisoformat, required=True)
     p_dc.add_argument("--to", dest="period_to", type=date.fromisoformat, required=True)
     p_dc.add_argument("--as-of", type=date.fromisoformat, required=True)

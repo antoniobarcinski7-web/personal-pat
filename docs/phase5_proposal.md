@@ -583,9 +583,118 @@ pat run-program --program-file p.json --writer --audit
 
 10 testes novos. Suíte offline: 914.
 
-## M5.6 — SEC / US GAAP (planejado)
+## M5.6 — SEC / US GAAP e o eixo SEGMENT ✅
 
-Só depois que a Petrobras funcionar de ponta a ponta. Absorve também o
-desbloqueio do eixo `SEGMENT`, pela decisão registrada acima: XBRL traz as
-dimensões de segmento como elementos de taxonomia com valor tipado, que é a
-fonte estruturada que a CVM não oferece.
+Quatro frentes. O plano de execução está em `docs/phase5_m56_plan.md`; o que a
+DERA revelou sobre segmentos, em `docs/phase5_m56_segment.md`.
+
+### Frente 1 — provider SEC/EDGAR
+
+Quatro datasets: `sec.submissions`, `sec.companyfacts` (fatos consolidados, sem
+dimensão), `sec.financial_statements` (dataset trimestral da DERA, **com**
+dimensão) e `sec.filing_doc`.
+
+Duas diferenças em relação à CVM mudaram o desenho, ambas verificadas e não
+supostas:
+
+- **A SEC exige `User-Agent` identificado** — UA genérico volta 403. O provider
+  lê `PAT_SEC_USER_AGENT` do ambiente e recusa operar sem ele. O contato **não**
+  é embutido no código: commitá-lo publicaria um dado pessoal e o enviaria a um
+  terceiro toda vez que qualquer pessoa rodasse o projeto.
+- **A SEC não reescreve arquivamento.** A CVM reescreve o ZIP anual quando há
+  reapresentação; aqui uma reapresentação é um arquivamento novo, com accession
+  próprio. `pat changed` não acusa reapresentação nesta fonte, e isso não é bug —
+  é a origem se comportando de outro jeito. O bitemporal vem de `filed`.
+
+### Frente 3 — entidade universal
+
+`gold_fact` carregava `cod_cvm` e `denom_cia` como colunas obrigatórias — um
+endereço de **regime** dentro da tabela universal de fatos, o mesmo erro de
+categoria que citar `cd_conta` em `concepts.py` seria. Funcionava enquanto só
+existia o Brasil e quebrava na primeira companhia americana.
+
+Agora o fato guarda só `entity_id`, opaco. Os identificadores locais vivem em
+`entity(entity_id, jurisdiction, scheme, local_id, display_name, is_primary)`.
+Uma jurisdição nova não pede coluna nova: pede uma **linha**.
+
+**O sentinel silencioso morreu.** `AsOf.coverage()` usava `max(cod_cvm) is None`
+como sentinela de "não há nada" — funcionava por acidente, e uma companhia
+americana teria `cod_cvm` nulo *com* fatos e sumiria sem erro. A pergunta agora
+é `COUNT(*)`, e as três ausências ficaram distinguíveis:
+
+| situação | resposta |
+|---|---|
+| entidade inexistente | `entity()` devolve `None` → confira o identificador |
+| entidade sem fatos | `entity()` acha, `coverage()` não → rode o build |
+| linha não publicada | `MISSING_FACT_AS_OF` → outro período ou conta |
+
+Migração verificada campo a campo: 18.158 fatos preservados, mesmo SHA dos
+`fact_id`s, mesma soma de valores, 12 métricas idênticas até a última casa
+decimal. Idempotente, com rastro em `schema_migration`.
+
+### Frente 2 — regime `us-gaap`
+
+O segundo regime real. **Nenhum conceito, métrica ou decomposição mudou para ele
+existir** — `ebitda@v1` foi escrita pensando na CVM e roda sobre a Intel sem uma
+linha de alteração.
+
+```
+Intel FY2023 (fim 2023-12-30)     Intel FY2024 (fim 2024-12-28)
+  receita   54.228 MM USD           receita   53.101 MM USD
+  ebit          93 MM USD           ebit     -11.678 MM USD
+  d_and_a    9.602 MM USD           d_and_a   11.379 MM USD
+  ebitda     9.695 MM USD           ebitda      -299 MM USD
+```
+
+E no mesmo motor, na mesma execução: Petrobras FY2024 em 204.234 MM BRL, regime
+`ifrs_cpc_br/BR`.
+
+O mapeamento da Intel é a melhor justificativa que o projeto já teve para
+`equivalence_basis`: ela **não usa** `Revenues`, **não usa** `CostOfRevenue` e
+**não publica** `DepreciationDepletionAndAmortization` — reporta D&A em dois
+elementos separados, somados pelo binding. Casamento por semelhança de nome
+concluiria que a Intel não divulga receita.
+
+**Sem família, de propósito.** A CVM padroniza o plano de contas, então uma
+família cobre quase toda companhia não financeira. O us-gaap não padroniza a
+escolha de elemento — uma "família us-gaap" seria uma suposição sobre o que a
+próxima companhia escolheu.
+
+**Um achado nos dados:** 6 de 25.354 fatos da Intel têm `filed` anterior ao fim
+do período. Não é corrupção — são divulgações **prospectivas**
+(`CashFlowHedgeGainLossToBeReclassifiedWithinTwelveMonths`). O contrato `Fact`
+os recusa e está certo: não são fatos históricos. Descartados e **contados**.
+
+### Frente 4 — eixo SEGMENT
+
+```
+Petrobras → CVM → SEGMENT = NO_BREAKDOWN_SOURCE
+Intel     → SEC → SEGMENT = resolução estruturada, residual ZERO
+```
+
+Receita da Intel FY2023→FY2024, US$ MM: All other −1.784, Intel Foundry −1.367,
+CCG **+1.032**, eliminação +742, DCAI +182, NEX +68 — soma −1.127, **resíduo 0**.
+
+**Os membros são declarados, não descobertos.** A fonte publica os membros mas
+não a hierarquia — ela mora no linkbase de apresentação, que `num.txt` não traz.
+Lado a lado com as folhas, a DERA publica um **roll-up**
+(`ClientComputingGroupDatacenterAndAIAndNetworkAndEdge` = CCG + DCAI + NEX) e um
+recorte dentro da Foundry (`ProductOrService=AssemblyAndTest`). Somar tudo
+contaria três segmentos duas vezes, e o total pareceria plausível. Nenhum dos
+dois está declarado, e por isso nenhum participa.
+
+**A eliminação intersegmento é um membro, não um resíduo.** Sem ela a soma dos
+segmentos (70.316) excederia a consolidada (53.101) em 17.215 — e esse valor
+apareceria como "não explicado", o que seria falso: é uma eliminação publicada.
+
+**O alvo vem da mesma fonte que os membros.** A DERA normaliza `ddate` para fim
+de mês; o exercício fiscal da Intel fecha em 2024-12-28. Trazendo o alvo da
+própria DERA, a identidade fecha dentro de um espaço de datas só.
+
+Nenhuma abstração dimensional nova foi introduzida. A aplicação da dimensão vive
+no **resolver** — `FactResolver.resolve` ganhou `member`, e o resolver da CVM
+**recusa** em vez de ignorar, o que virou a segunda barreira do bloqueio
+brasileiro. Um teste de layering pegou a primeira versão, que montava o endereço
+no motor.
+
+Suíte offline: 961. Rede: 24.
