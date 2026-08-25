@@ -91,8 +91,21 @@ class FactResolver(Protocol):
         period_kind: PeriodKind,
         scope: ReportingScope,
         as_of: date,
+        member: str | None = None,
     ) -> ResolvedFact | ResolutionFailure:
-        """Nunca levanta por dado ausente: ausencia e resposta, e vem nomeada."""
+        """Nunca levanta por dado ausente: ausencia e resposta, e vem nomeada.
+
+        `member` restringe a resolucao a um membro dimensional, na forma que a
+        FONTE publica. Quem monta o endereco dimensional e o resolver, e nao o
+        motor: a dimensao e vocabulario de regime, e o motor nao pode conhecer
+        regime nenhum - ha teste de layering que falha se ele passar a
+        conhecer.
+
+        Um resolver cujo regime nao publica dimensao recusa com
+        `SCOPE_NOT_AVAILABLE` em vez de ignorar o parametro. Ignorar devolveria
+        o consolidado no lugar do segmento pedido: um numero certo para outra
+        pergunta.
+        """
         ...
 
     def entity_display(self, entity_id: str) -> tuple[str | None, tuple[tuple[str, str], ...]]:

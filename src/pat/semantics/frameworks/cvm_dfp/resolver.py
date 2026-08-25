@@ -88,7 +88,22 @@ class CvmDfpResolver:
         period_kind: PeriodKind,
         scope: ReportingScope,
         as_of: date,
+        member: str | None = None,
     ) -> ResolvedFact | ResolutionFailure:
+        if member is not None:
+            # SEGUNDA barreira do eixo dimensional no regime da CVM. A primeira
+            # e a decomposicao recusar por falta de membro declarado; esta pega
+            # quem chegue aqui por outro caminho.
+            #
+            # Recusar, e nao ignorar: ignorar devolveria o consolidado no lugar
+            # do segmento pedido - um numero certo para outra pergunta, que e a
+            # pior classe de erro deste sistema.
+            return ResolutionFailure(
+                UnavailableReason.SCOPE_NOT_AVAILABLE,
+                f"o plano padronizado da CVM nao publica dimensao; membro pedido: "
+                f"{member!r}. A informacao por segmento existe em nota explicativa, "
+                "em PDF, da qual este projeto nao deriva fato quantitativo.",
+            )
         # O nome e BEST-EFFORT e nao participa da resolucao. Fazer a busca de
         # um fato depender da tabela de nomes seria acoplar dado a rotulo: o
         # fato existe tendo ou nao alguem registrado como a empresa se chama.

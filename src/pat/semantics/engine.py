@@ -167,6 +167,112 @@ class Engine:
             )
         return outcome
 
+    def resolve_member(
+        self,
+        concept_id: str,
+        member,
+        *,
+        entity_id: str,
+        period_end: date,
+        scope: ReportingScope,
+        as_of: date,
+    ) -> "ConceptValue | ConceptUnavailable":
+        """Resolve um conceito RESTRITO a um membro dimensional declarado.
+
+        Reusa o binding do conceito e acrescenta a dimensao ao endereco. Isso
+        preserva a separacao que a Fase 2 estabeleceu: o CONCEITO continua
+        universal, o ENDERECO continua opaco fora do adapter, e o MEMBRO e mais
+        um componente do endereco - nao um eixo novo de significado.
+
+        Nao ha abstracao dimensional nova aqui, e nao deveria haver: `member` e
+        um par (eixo, membro) declarado pelo mapeamento da empresa, e o adapter
+        do regime ja sabe montar um endereco com dimensao.
+        """
+        chain = self._mappings.resolve(entity_id, source=self._source)
+        if chain is None:
+            return ConceptUnavailable(
+                reason=UnavailableReason.NO_MAPPING,
+                message=f"nenhum mapeamento cobre {entity_id} na fonte {self._source}",
+                concept_id=concept_id,
+            )
+        found = chain.binding_for(concept_id)
+        if found is None:
+            return ConceptUnavailable(
+                reason=UnavailableReason.MISSING_CONCEPT,
+                message=f"o mapeamento nao liga {concept_id!r} a nenhuma linha",
+                concept_id=concept_id,
+            )
+        binding, _owner = found
+        resolver = self._resolvers.get(chain.head.taxonomy)
+        if resolver is None:
+            return ConceptUnavailable(
+                reason=UnavailableReason.NO_MAPPING,
+                message=f"nenhum resolver para a taxonomia {chain.head.taxonomy}",
+                concept_id=concept_id,
+            )
+
+        total = Decimal(0)
+        refs: list[InputRef] = []
+        moedas: set[str] = set()
+        conhecidas: list[date] = []
+        tipos: set[PeriodType] = set()
+        inicios: set[date | None] = set()
+
+        chave = member.source_key or f"{member.axis}={member.member_id};"
+        for line in binding.lines:
+            endereco = line.address
+            outcome = resolver.resolve(
+                entity_id=entity_id,
+                address=endereco,
+                period_end=period_end,
+                period_kind=concepts.get(concept_id).period_kind,
+                scope=scope,
+                as_of=as_of,
+                member=chave,
+            )
+            if isinstance(outcome, ResolutionFailure):
+                return ConceptUnavailable(
+                    reason=outcome.reason,
+                    message=f"membro {member.member_id}: {outcome.message}",
+                    concept_id=concept_id,
+                    tried=(f"{endereco.as_str()} [{chave}]",),
+                )
+            total += Decimal(line.sign) * outcome.value
+            moedas.add(outcome.currency)
+            conhecidas.append(outcome.knowledge_date)
+            tipos.add(outcome.period_type)
+            inicios.add(outcome.period_start)
+            refs.append(
+                InputRef(
+                    role=f"{concept_id}[{member.member_id}]",
+                    value=outcome.value,
+                    address=f"{endereco.as_str()} [{chave}]",
+                    fact_id=outcome.fact_id,
+                    knowledge_date=outcome.knowledge_date,
+                    sign_applied=line.sign,
+                    is_metric=False,
+                    fidelity=binding.fidelity,
+                )
+            )
+
+        if len(moedas) > 1:
+            return ConceptUnavailable(
+                reason=UnavailableReason.MIXED_CURRENCY,
+                message=f"membro {member.member_id} em moedas diferentes: {sorted(moedas)}",
+                concept_id=concept_id,
+            )
+
+        return ConceptValue(
+            concept_id=concept_id,
+            value=total,
+            currency=next(iter(moedas)),
+            fidelity=binding.fidelity,
+            period_type=next(iter(tipos)),
+            period_start=next(iter(inicios)),
+            knowledge_date=max(conhecidas),
+            inputs=tuple(refs),
+        )
+
     def mapping_chain_for(self, entity_id: str):
         """A cadeia de mapeamento efetiva. A decomposicao precisa do sha256
         dela pelo mesmo motivo que `MetricResult` precisa: editar a familia

@@ -35,7 +35,14 @@ from pat.contracts.semantics import LineAddress, StatementKind, TaxonomyId
 from pat.semantics.frameworks import AdapterError
 
 _ELEMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
-_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*=[A-Za-z0-9_.;-]+$")
+_SEGMENT_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*=[A-Za-z0-9_.-]+;?)+$")
+"""Uma ou MAIS dimensoes concatenadas, na forma que a SEC publica.
+
+Uma linha dimensional costuma carregar dois eixos ao mesmo tempo -
+`BusinessSegments=IntelFoundry;ConsolidationItems=OperatingSegments;` - e o
+segundo e o que distingue segmento operacional de eliminacao. Aceitar so um
+eixo obrigaria a normalizar a string, e normalizar aqui exigiria
+desnormalizar no resolver."""
 
 STATEMENT_KINDS: dict[str, StatementKind] = {
     "income": StatementKind.INCOME,

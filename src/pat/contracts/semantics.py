@@ -270,6 +270,52 @@ class ConceptBinding(Frozen):
         return self
 
 
+class SegmentMember(Frozen):
+    """Um membro de eixo dimensional, DECLARADO pelo mapeamento da empresa.
+
+    Declarado, e nao descoberto. A fonte publica os membros que o emissor usa,
+    mas nao publica a HIERARQUIA entre eles - roll-up e folha aparecem lado a
+    lado, e a arvore mora no linkbase de apresentacao do XBRL, que os datasets
+    tabulares nao trazem.
+
+    Na Intel isso nao e teorico: `ClientComputingGroupDatacenterAndAIAndNetworkAndEdge`
+    e exatamente a soma de tres outros membros. Um sistema que somasse tudo que
+    a fonte publica contaria esses tres duas vezes - e o total pareceria
+    plausivel.
+
+    So participa da decomposicao quem esta declarado aqui. E a mesma disciplina
+    de `[[binding]]`: equivalencia e afirmada, nunca deduzida.
+    """
+
+    axis: str = Field(min_length=1, description="'BusinessSegments', 'Geographical'")
+    member_id: str = Field(min_length=1, description="Como a fonte publica o membro")
+    label: str = Field(min_length=1, description="Rotulo legivel, para o relatorio")
+    source_key: str = ""
+    """A string de dimensao EXATAMENTE como a fonte a publica.
+
+    Necessaria porque uma linha dimensional costuma carregar mais de um eixo ao
+    mesmo tempo: na Intel, o segmento vem como
+    `BusinessSegments=ClientComputingGroup;ConsolidationItems=OperatingSegments;`
+    - o segundo eixo distingue segmento operacional de eliminacao.
+
+    Declarar a string literal, em vez de monta-la a partir de `axis` e
+    `member_id`, faz duas coisas de uma vez: casa exato com a fonte sem
+    normalizacao, e EXCLUI automaticamente os recortes mais finos. O membro
+    `...;ProductOrService=AssemblyAndTest;` da Intel e um recorte dentro da
+    Foundry, e nao um segmento irmao; com string exata ele simplesmente nao
+    casa, sem precisar de regra extra.
+
+    Vazia, cai para `axis=member_id;` - suficiente onde a fonte publica um eixo
+    so."""
+    is_elimination: bool = False
+    """Marca a linha de eliminacao intersegmento.
+
+    Ela E um membro da identidade - sem ela a soma dos segmentos excede o
+    consolidado - mas nao e um segmento: e o ajuste que reconcilia os dois. Um
+    relatorio que a apresentasse como "mais um segmento" diria que a companhia
+    tem um negocio de receita negativa."""
+
+
 class Mapping(Frozen):
     """Um conjunto de bindings, com o regime a que pertence como metadado.
 
@@ -298,6 +344,12 @@ class Mapping(Frozen):
     )
 
     bindings: tuple[ConceptBinding, ...] = ()
+    segments: tuple[SegmentMember, ...] = ()
+    """Membros dimensionais declarados. Vazio na maioria dos mapeamentos.
+
+    Vazio significa "este mapeamento nao declara membros", e portanto que o
+    eixo dimensional nao resolve para esta empresa - que e o estado da CVM
+    inteira, onde a fonte nao publica a dimensao."""
 
     @model_validator(mode="after")
     def _check(self) -> "Mapping":

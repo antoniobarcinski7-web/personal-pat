@@ -92,6 +92,7 @@ class UsGaapResolver:
         period_kind: PeriodKind,
         scope: ReportingScope,
         as_of: date,
+        member: str | None = None,
     ) -> ResolvedFact | ResolutionFailure:
         if scope is not ReportingScope.CONSOLIDATED:
             return ResolutionFailure(
@@ -101,6 +102,11 @@ class UsGaapResolver:
             )
 
         element, segment = parts_of(address)
+        # O membro pedido SUBSTITUI a dimensao do endereco. E aqui que a
+        # dimensao entra, e nao no motor: `BusinessSegments=IntelFoundry;` e
+        # vocabulario da SEC, e o motor nao pode conhece-lo.
+        if member is not None:
+            segment = member
         ref = self._entity(entity_id)
 
         view = self._asof.value(

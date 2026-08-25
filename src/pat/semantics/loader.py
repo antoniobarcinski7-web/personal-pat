@@ -57,6 +57,32 @@ def _require(data: dict, key: str, where: str) -> object:
     return data[key]
 
 
+def _parse_segments(raw, *, where: str):
+    """Blocos `[[segment]]` -> membros declarados.
+
+    Campo desconhecido levanta, pela mesma razao dos enderecos: um `member`
+    no singular passaria batido e viraria membro ausente na decomposicao, que
+    parece problema de dado quando na verdade e erro de digitacao.
+    """
+    from pat.contracts.semantics import SegmentMember
+
+    permitidos = {"axis", "member_id", "label", "is_elimination", "source_key"}
+    saida = []
+    for bloco in raw:
+        desconhecidos = set(bloco) - permitidos
+        if desconhecidos:
+            raise MappingError(
+                f"{where}: campos desconhecidos em [[segment]]: {sorted(desconhecidos)}. "
+                f"Aceitos: {sorted(permitidos)}"
+            )
+        saida.append(SegmentMember(**bloco))
+
+    ids = [(m.axis, m.member_id) for m in saida]
+    if len(ids) != len(set(ids)):
+        raise MappingError(f"{where}: membro de segmento repetido")
+    return tuple(saida)
+
+
 def parse_mapping(raw: bytes, *, where: str) -> Mapping:
     """Bytes de um TOML -> `Mapping` validado, com sha256 dos proprios bytes."""
     try:
@@ -140,6 +166,7 @@ def parse_mapping(raw: bytes, *, where: str) -> Mapping:
         verified_by=data.get("verified_by"),
         verified_against=data.get("verified_against"),
         bindings=tuple(bindings),
+        segments=_parse_segments(data.get("segment", []), where=where),
     )
 
 

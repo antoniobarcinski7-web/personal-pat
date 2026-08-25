@@ -30,7 +30,7 @@ from tests.research.test_decompose import (
 )
 
 
-def _com_definicao_de_segmento(entity_id: str, ref: str = "receita_por_segmento@v1"):
+def _com_definicao_de_segmento(entity_id: str, ref: str = "receita_por_segmento_teste@v1"):
     """Registra temporariamente uma decomposicao de eixo SEGMENT."""
     definicao = DecompositionDefinition(
         decomposition_id=ref.split("@")[0],
@@ -113,15 +113,21 @@ def test_a_recusa_nao_depende_de_a_empresa_ter_dados():
     assert segmento.reason is DecompositionFailureReason.NO_BREAKDOWN_SOURCE
 
 
-def test_nenhuma_decomposicao_registrada_usa_eixo_sem_fonte():
-    """O catalogo so registra o que tem fonte, e o snapshot marca o resto.
+def test_decomposicao_de_eixo_dimensional_declara_o_eixo():
+    """Toda decomposicao nao-COMPONENT diz de qual eixo ela fala.
 
-    Um eixo bloqueado continua VISIVEL no capability (`available=False`) para
-    que um planejador nao peca a decomposicao achando que inventou a ideia -
-    mas nenhuma definicao registrada depende dele.
+    Sem `member_axis`, a decomposicao nao teria como saber quais membros do
+    mapeamento sao dela - e um mapeamento pode declarar mais de um eixo
+    (segmento e geografia, por exemplo).
     """
     for definicao in decompositions.all_definitions():
-        assert definicao.axis is BreakdownAxis.COMPONENT, (
-            f"{definicao.ref} usa o eixo {definicao.axis}, que ainda nao tem fonte "
-            "estruturada em nenhum regime implementado"
-        )
+        if definicao.axis is BreakdownAxis.COMPONENT:
+            assert not definicao.member_axis, (
+                f"{definicao.ref}: no eixo COMPONENT os membros sao conceitos "
+                "universais, e nao membros de um eixo da fonte"
+            )
+        else:
+            assert definicao.member_axis, (
+                f"{definicao.ref} usa o eixo {definicao.axis} e nao diz qual eixo "
+                "da fonte os membros habitam"
+            )

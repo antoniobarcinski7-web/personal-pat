@@ -177,6 +177,7 @@ def parse_dera_num(
     retrieval_id: str,
     extraction_run_id: str,
     only_dimensional: bool = True,
+    elements: tuple[str, ...] | None = None,
 ) -> list[XbrlFactLine]:
     """ZIP trimestral da DERA -> linhas COM dimensao, de uma companhia.
 
@@ -188,6 +189,23 @@ def parse_dera_num(
 
     O que so existe aqui e o dado por segmento. E ele que justifica baixar
     130 MB.
+
+    `elements` restringe a quais elementos ingerir. Com ele e possivel trazer
+    tambem o fato CONSOLIDADO de um elemento especifico - o que a decomposicao
+    por segmento precisa como alvo. Sem essa restricao, `only_dimensional=False`
+    traria o dataset inteiro e criaria uma segunda copia de tudo que
+    `companyfacts` ja publica.
+
+    Por que o alvo vem daqui, e nao de `companyfacts`
+    --------------------------------------------------
+    A DERA normaliza `ddate` para fim de mes (2024-12-31), enquanto o exercicio
+    fiscal da Intel fecha em 2024-12-28. Os dois nunca casariam por
+    `period_end`. Trazendo o alvo da MESMA fonte que os membros, a identidade
+    fecha dentro de um espaco de datas so - e o fato de `companyfacts`
+    continua existindo, na data fiscal correta, para todo o resto.
+
+    Nao sao duas fontes de verdade para a mesma chave: sao chaves diferentes
+    (`period_end` distinto), cada uma com sua linhagem, e ambas verdadeiras.
     """
     with zipfile.ZipFile(io.BytesIO(payload)) as arquivo:
         membros = set(arquivo.namelist())
@@ -216,6 +234,8 @@ def parse_dera_num(
     for ordinal, registro in enumerate(_dera_rows(numeros, set(entregas))):
         segmentos = (registro.get("segments") or "").strip()
         if only_dimensional and not segmentos:
+            continue
+        if elements is not None and registro.get("tag") not in elements:
             continue
         valor = _decimal(registro.get("value"))
         if valor is None:

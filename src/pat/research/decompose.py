@@ -94,7 +94,15 @@ def decompose(
         )
 
     if definition.axis is not BreakdownAxis.COMPONENT:
-        return _no_source(definition, entity_id, as_of)
+        return _decompose_by_axis(
+            engine,
+            definition,
+            entity_id=entity_id,
+            period_from=period_from,
+            period_to=period_to,
+            scope=scope,
+            as_of=as_of,
+        )
 
     if period_from >= period_to:
         return _fail(
@@ -218,6 +226,166 @@ def decompose(
         target_delta_pct=delta_pct,
         contributions=tuple(
             contribuicao.model_copy(update={"share": share}) for contribuicao, share in shares
+        ),
+        residual=residual,
+        residual_share=residual_share,
+        closes=abs(residual) <= definition.tolerance_abs,
+        tolerance_abs=definition.tolerance_abs,
+        currency=str(de_alvo.currency),
+        fidelity=weakest(fidelidades),
+        knowledge_date=max(de_alvo.knowledge_date, para_alvo.knowledge_date),
+        mapping_sha256=chain.sha256,
+    )
+
+
+def _decompose_by_axis(
+    engine: Engine,
+    definition: DecompositionDefinition,
+    *,
+    entity_id: str,
+    period_from: date,
+    period_to: date,
+    scope: ReportingScope,
+    as_of: date,
+) -> DecompositionResult | DecompositionUnavailable:
+    """Abre a variacao por MEMBRO dimensional declarado.
+
+    Os membros vem do mapeamento da empresa, e nunca da fonte. A fonte publica
+    os membros que o emissor usa, mas nao publica a hierarquia entre eles -
+    roll-up e folha aparecem lado a lado. Somar tudo que a fonte tem contaria
+    segmentos duas vezes, e o total pareceria plausivel.
+
+    Sem membro declarado, `NO_BREAKDOWN_SOURCE`. E o estado da CVM inteira: a
+    fonte nao publica a dimensao, entao nao ha o que declarar.
+    """
+    chain = engine.mapping_chain_for(entity_id)
+    membros = [
+        m
+        for m in (chain.head.segments if chain else ())
+        if m.axis == definition.member_axis or m.is_elimination
+    ]
+    if not membros:
+        return _no_source(definition, entity_id, as_of)
+
+    if period_from >= period_to:
+        return _fail(
+            definition,
+            DecompositionFailureReason.PERIOD_ORDER,
+            f"periodo inicial {period_from} nao e anterior a {period_to}",
+            entity_id=entity_id,
+            period_from=period_from,
+            period_to=period_to,
+            as_of=as_of,
+        )
+
+    alvo = _pair(
+        engine,
+        definition.target_concept,
+        entity_id=entity_id,
+        period_from=period_from,
+        period_to=period_to,
+        scope=scope,
+        as_of=as_of,
+    )
+    if isinstance(alvo, DecompositionUnavailable):
+        return _retag(alvo, definition, DecompositionFailureReason.TARGET_UNAVAILABLE)
+    de_alvo, para_alvo = alvo
+
+    if de_alvo.currency != para_alvo.currency:
+        return _mixed_currency(
+            definition, entity_id, period_from, period_to, as_of,
+            de_alvo.currency, para_alvo.currency,
+        )
+
+    contribuicoes: list[Contribution] = []
+    fidelidades: list[Fidelity] = [de_alvo.fidelity, para_alvo.fidelity]
+
+    for membro in membros:
+        de = engine.resolve_member(
+            definition.target_concept, membro,
+            entity_id=entity_id, period_end=period_from, scope=scope, as_of=as_of,
+        )
+        para = engine.resolve_member(
+            definition.target_concept, membro,
+            entity_id=entity_id, period_end=period_to, scope=scope, as_of=as_of,
+        )
+        faltou_de = isinstance(de, ConceptUnavailable)
+        faltou_para = isinstance(para, ConceptUnavailable)
+
+        if faltou_de and faltou_para:
+            return DecompositionUnavailable(
+                reason=DecompositionFailureReason.MEMBER_UNAVAILABLE,
+                message=f"membro {membro.member_id!r} indisponivel nos dois periodos: {de.message}",
+                decomposition_id=definition.ref,
+                axis=definition.axis,
+                member_id=membro.member_id,
+                entity_id=entity_id,
+                period_from=period_from,
+                period_to=period_to,
+                as_of=as_of,
+            )
+        if faltou_de or faltou_para:
+            ausente = period_from if faltou_de else period_to
+            return DecompositionUnavailable(
+                reason=DecompositionFailureReason.MEMBER_ONLY_IN_ONE_PERIOD,
+                message=(
+                    f"membro {membro.member_id!r} nao existe em {ausente}. Segmento novo "
+                    "ou encerrado: tratar a ausencia como zero atribuiria o valor "
+                    "inteiro do outro periodo como contribuicao."
+                ),
+                decomposition_id=definition.ref,
+                axis=definition.axis,
+                member_id=membro.member_id,
+                entity_id=entity_id,
+                period_from=period_from,
+                period_to=period_to,
+                as_of=as_of,
+            )
+
+        delta = para.value - de.value
+        contribuicoes.append(
+            Contribution(
+                member_id=membro.member_id,
+                member_label=membro.label,
+                sign=1,
+                value_from=de.value,
+                value_to=para.value,
+                delta=delta,
+                contribution=delta,
+                fidelity=weakest([de.fidelity, para.fidelity]),
+                inputs=tuple(de.inputs) + tuple(para.inputs),
+            )
+        )
+        fidelidades.extend([de.fidelity, para.fidelity])
+
+    target_delta = para_alvo.value - de_alvo.value
+    soma = sum((c.contribution for c in contribuicoes), Decimal(0))
+    residual = target_delta - soma
+
+    with localcontext() as contexto:
+        contexto.prec = SHARE_PRECISION
+        shares = [(c, _share(c.contribution, target_delta)) for c in contribuicoes]
+        residual_share = _share(residual, target_delta)
+        delta_pct = (target_delta / abs(de_alvo.value)) if de_alvo.value != 0 else None
+
+    return DecompositionResult(
+        decomposition_id=definition.decomposition_id,
+        decomposition_version=definition.version,
+        axis=definition.axis,
+        target_id=definition.target_concept,
+        target_label=definition.target_label,
+        entity_id=entity_id,
+        scope=scope,
+        period_type=de_alvo.period_type,
+        period_from=period_from,
+        period_to=period_to,
+        as_of=as_of,
+        target_from=de_alvo.value,
+        target_to=para_alvo.value,
+        target_delta=target_delta,
+        target_delta_pct=delta_pct,
+        contributions=tuple(
+            c.model_copy(update={"share": share}) for c, share in shares
         ),
         residual=residual,
         residual_share=residual_share,

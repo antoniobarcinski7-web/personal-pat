@@ -191,3 +191,73 @@ element   = "AmortizationOfIntangibleAssets"
 statement = "cash_flow"
 sign      = 1
 label_as_reported = "Amortization of intangible assets"
+
+# ---------------------------------------------------------------------------
+# Segmentos operacionais (IFRS 8 / ASC 280)
+#
+# Declarados um a um, e nao descobertos. A DERA publica os membros que a Intel
+# usa, mas NAO publica a hierarquia entre eles - ela mora no linkbase de
+# apresentacao do XBRL, que `num.txt` nao traz. Sem declaracao, um sistema que
+# somasse todos os membros contaria tres segmentos DUAS VEZES, porque
+# `ClientComputingGroupDatacenterAndAIAndNetworkAndEdge` (48.949 MM em FY2024)
+# e exatamente CCG + DCAI + NEX (30.290 + 12.817 + 5.842).
+#
+# Esse roll-up NAO esta declarado abaixo, e e por isso que ele nao participa.
+# Tampouco participa `ProductOrService=AssemblyAndTest`, que e um recorte
+# DENTRO da Foundry e nao um segmento irmao.
+#
+# A ELIMINACAO INTERSEGMENTO E UM MEMBRO DECLARADO.
+#
+# A receita da Intel Foundry e majoritariamente interna - vendida a CCG e DCAI
+# e eliminada na consolidacao. Sem a linha de eliminacao, a soma dos segmentos
+# (70.316 MM) excederia a receita consolidada (53.101 MM) em 17.215 MM, e essa
+# diferenca apareceria como "residual nao explicado" - o que seria falso: ela
+# e uma eliminacao conhecida e publicada. Declarando-a como membro, a
+# identidade fecha EXATAMENTE:
+#
+#   30.290 + 12.817 + 5.842 + 17.543 + 3.824 - 17.215 = 53.101   (FY2024)
+#
+# O ALVO VEM DA MESMA FONTE QUE OS MEMBROS.
+#
+# A DERA normaliza `ddate` para fim de mes (2024-12-31); o exercicio fiscal da
+# Intel fecha em 2024-12-28. O fato consolidado de `companyfacts` e o fato por
+# segmento da DERA nunca casariam por periodo. Por isso a decomposicao usa o
+# consolidado da PROPRIA DERA - mesma fonte, mesmo espaco de datas, identidade
+# fechando dentro de um regime de data so.
+
+[[segment]]
+axis      = "BusinessSegments"
+member_id = "ClientComputingGroup"
+source_key = "BusinessSegments=ClientComputingGroup;ConsolidationItems=OperatingSegments;"
+label     = "Client Computing Group"
+
+[[segment]]
+axis      = "BusinessSegments"
+member_id = "DatacenterAndAI"
+source_key = "BusinessSegments=DatacenterAndAI;ConsolidationItems=OperatingSegments;"
+label     = "Data Center and AI"
+
+[[segment]]
+axis      = "BusinessSegments"
+member_id = "NetworkAndEdge"
+source_key = "BusinessSegments=NetworkAndEdge;ConsolidationItems=OperatingSegments;"
+label     = "Network and Edge"
+
+[[segment]]
+axis      = "BusinessSegments"
+member_id = "IntelFoundry"
+source_key = "BusinessSegments=IntelFoundry;ConsolidationItems=OperatingSegments;"
+label     = "Intel Foundry"
+
+[[segment]]
+axis      = "BusinessSegments"
+member_id = "AllOtherSegments"
+source_key = "BusinessSegments=AllOtherSegments;ConsolidationItems=OperatingSegments;"
+label     = "All other"
+
+[[segment]]
+axis      = "ConsolidationItems"
+member_id = "IntersegmentElimination"
+source_key = "ConsolidationItems=IntersegmentElimination;"
+label     = "Eliminacao intersegmento"
+is_elimination = true

@@ -78,6 +78,14 @@ class DecompositionDefinition:
     grande demais faria uma decomposicao furada se apresentar como completa;
     por isso ela e da DEFINICAO, revisavel, e nao um parametro de chamada."""
 
+    member_axis: str = ""
+    """Eixo dimensional, quando `axis` nao e COMPONENT.
+
+    Vazio no eixo COMPONENT, cujos "membros" sao conceitos universais. Nos
+    demais e o nome do eixo na fonte (`BusinessSegments`), e os membros vem
+    declarados no mapeamento da empresa - nunca descobertos, porque a fonte
+    publica roll-up e folha lado a lado sem marcar qual e qual."""
+
     @property
     def ref(self) -> str:
         return f"{self.decomposition_id}@{self.version}"
@@ -152,6 +160,35 @@ _CATALOG: tuple[DecompositionDefinition, ...] = (
             "escolher uma e chamar de 'a' decomposicao do EBIT."
         ),
         tolerance_abs=Decimal(1000),
+    ),
+    DecompositionDefinition(
+        decomposition_id="revenue_by_segment",
+        version="v1",
+        axis=BreakdownAxis.SEGMENT,
+        target_concept=concepts.REVENUE_NET,
+        target_label="Receita liquida",
+        terms=(),
+        definition=(
+            "receita liquida = soma dos segmentos operacionais + eliminacao "
+            "intersegmento"
+        ),
+        rationale=(
+            "A decomposicao que responde 'qual negocio explica a variacao da "
+            "receita'. Diferente das outras tres, os membros NAO sao conceitos "
+            "universais: sao segmentos daquela companhia, declarados no mapeamento "
+            "dela.\n\n"
+            "A eliminacao intersegmento e um membro, e nao um ajuste escondido. Sem "
+            "ela a soma dos segmentos excede a receita consolidada - na Intel, em "
+            "17,2 bi de dolares em FY2024, porque a receita da Foundry e "
+            "majoritariamente interna. Um sistema que a omitisse mostraria esse "
+            "valor como 'residual nao explicado', o que seria falso: ele e uma "
+            "eliminacao publicada.\n\n"
+            "So resolve onde a fonte publica a dimensao de forma estruturada. No "
+            "regime da CVM ela nao existe - a informacao por segmento vive em nota "
+            "explicativa, em PDF - e a decomposicao recusa com NO_BREAKDOWN_SOURCE."
+        ),
+        tolerance_abs=Decimal(1000),
+        member_axis="BusinessSegments",
     ),
 )
 
