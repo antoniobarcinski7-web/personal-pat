@@ -261,3 +261,32 @@ member_id = "IntersegmentElimination"
 source_key = "ConsolidationItems=IntersegmentElimination;"
 label     = "Eliminacao intersegmento"
 is_elimination = true
+
+# ---------------------------------------------------------------------------
+# Resultado atribuivel a controladora
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "net_income_controlling"
+fidelity   = "exact"
+equivalence_basis = """
+`NetIncomeLoss` e, no us-gaap, o resultado do periodo ATRIBUIVEL AOS SOCIOS DA
+CONTROLADORA. O elemento para o resultado total, incluindo nao controladores, e
+`ProfitLoss` - e os dois existem lado a lado no companyfacts da Intel.
+
+Nao usar `ProfitLoss`, pela decisao A3: resultado total e conceito separado. Na
+Intel FY2024 a diferenca sao US$ 477 MM (-19.233 contra -18.756).
+
+A nomenclatura do us-gaap e uma armadilha para quem vem do Brasil, e vale
+registrar: `NetIncomeLoss` PARECE o total pelo nome, e nao e. Quem casasse
+elemento por semelhanca de rotulo com "Lucro/Prejuizo Consolidado do Periodo"
+escolheria o errado - a simetria correta e 3.11.01 para NetIncomeLoss e 3.11
+para ProfitLoss.
+
+Conferido: FY2023 US$ 1.689 MM, FY2024 US$ -18.756 MM. O prejuizo de FY2024 e
+real e atravessa o sistema sem tratamento especial.
+"""
+[[binding.line]]
+element   = "NetIncomeLoss"
+statement = "income"
+sign      = 1
+label_as_reported = "Net income (loss) attributable to Intel"

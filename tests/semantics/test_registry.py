@@ -113,6 +113,7 @@ def test_registro_embutido_e_valido():
         "d_and_a@v1",
         "ebitda@v1",
         "margem_ebitda@v1",
+        "lucro_liquido@v1",
     }
 
 

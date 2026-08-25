@@ -16,12 +16,13 @@ from pat.semantics.definitions import (
     d_and_a,
     ebit,
     ebitda,
+    lucro_liquido,
     margem_ebitda,
     receita_liquida,
 )
 from pat.semantics.registry import MetricRegistry
 
-MODULES = (receita_liquida, ebit, d_and_a, ebitda, margem_ebitda)
+MODULES = (receita_liquida, ebit, d_and_a, ebitda, margem_ebitda, lucro_liquido)
 
 
 def register_all(registry: MetricRegistry) -> MetricRegistry:

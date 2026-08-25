@@ -28,6 +28,7 @@ EBIT_REPORTED = "ebit_reported"
 EQUITY_METHOD_RESULT = "equity_method_result"
 D_AND_A_PNL = "d_and_a_pnl"
 D_AND_A_RETAINED = "d_and_a_retained"
+NET_INCOME_CONTROLLING = "net_income_controlling"
 
 
 _CATALOG: tuple[Concept, ...] = (
@@ -139,6 +140,34 @@ _CATALOG: tuple[Concept, ...] = (
             "Grandeza economicamente distinta de `d_and_a_pnl`, nao um sinonimo dela. "
             "Nas duas ha anos em que coincidem e anos em que divergem muito.",
             "Nem todo regime publica esta grandeza.",
+        ),
+    ),
+    Concept(
+        concept_id=NET_INCOME_CONTROLLING,
+        label_en="Net income attributable to owners of the parent",
+        definition=(
+            "Resultado do periodo atribuivel aos socios da controladora, depois do "
+            "resultado financeiro, dos tributos sobre o lucro e das operacoes "
+            "descontinuadas."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = lucro",
+        boundary_notes=(
+            "ATRIBUIVEL A CONTROLADORA, e nao o resultado consolidado total. A "
+            "decisao A3 do projeto: o total incluindo nao controladores e conceito "
+            "SEPARADO, e nao ha fallback automatico de um para o outro.",
+            "A diferenca nao e cosmetica. Petrobras FY2024: consolidado 37.009 MM, "
+            "atribuivel a controladora 36.606 MM, nao controladores 403 MM. Intel "
+            "FY2024: ProfitLoss -19.233 MM, NetIncomeLoss -18.756 MM. Quem calcula "
+            "lucro por acao ou retorno sobre o capital do acionista quer o "
+            "atribuivel; quem soma os dois numeros esta contando o que nao lhe "
+            "pertence.",
+            "Inclui operacoes descontinuadas, porque e o resultado do periodo COMO "
+            "REPORTADO. Um lucro ex-descontinuadas e outro conceito - mesma "
+            "disciplina de `ebit_reported`, que inclui equivalencia patrimonial.",
+            "Nao e EBIT nem EBITDA: aqueles param antes do resultado financeiro e "
+            "dos tributos, e substituir um pelo outro muda a pergunta.",
         ),
     ),
 )

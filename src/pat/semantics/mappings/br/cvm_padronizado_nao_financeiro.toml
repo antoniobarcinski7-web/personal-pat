@@ -147,3 +147,32 @@ statement = "DVA"
 cd_conta  = "7.04.01"
 sign      = -1
 label_as_reported = "Depreciação, Amortização e Exaustão"
+
+[[binding]]
+concept_id = "net_income_controlling"
+fidelity   = "exact"
+equivalence_basis = """
+3.11.01 "Atribuído a Sócios da Empresa Controladora" e a linha do plano \
+padronizado que isola, dentro do resultado consolidado do periodo, a parcela \
+que pertence aos acionistas da controladora. E exatamente o conceito \
+`net_income_controlling`, e por isso a fidelidade e exata.
+
+NAO usar 3.11. Aquela linha e o "Lucro/Prejuízo Consolidado do Período" - o \
+resultado TOTAL, incluindo nao controladores - e e conceito diferente pela \
+decisao A3. Na Petrobras FY2024 a diferenca sao R$ 403 MM (37.009 contra \
+36.606); em holdings com participacoes relevantes ela chega a dezenas de por \
+cento.
+
+O codigo 3.11.01 e estavel no plano padronizado, e nao subconta especifica de \
+companhia - por isso este binding pode viver na FAMILIA, diferente do de \
+d_and_a_pnl. Uma companhia sem nao controladores publica 3.11.01 igual a 3.11, \
+e o binding continua correto.
+
+Positivo quando ha lucro, negativo quando ha prejuizo, ja na convencao do \
+conceito; sign=+1. Prejuizo atravessa sem tratamento especial.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.11.01"
+sign      = 1
+label_as_reported = "Atribuído a Sócios da Empresa Controladora"
