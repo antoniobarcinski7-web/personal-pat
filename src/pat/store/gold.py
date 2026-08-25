@@ -235,6 +235,11 @@ def identities_from(facts: Sequence[GoldFact]) -> list["EntityIdentity"]:
 
     vistos: dict[tuple[str, str], EntityIdentity] = {}
     for g in facts:
+        # So o caminho da CVM. Um fato de outra jurisdicao chega aqui pelo
+        # builder dela, que sabe qual e o identificador canonico de la - e
+        # derivar CNPJ de um `us:cik:` produziria um identificador inventado.
+        if not g.fact.entity_id.startswith("br:cnpj:"):
+            continue
         cnpj = g.fact.entity_id.removeprefix("br:cnpj:")
         for scheme, local_id, primario in (
             ("cnpj", cnpj, True),

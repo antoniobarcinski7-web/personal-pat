@@ -68,3 +68,54 @@ def write_lines(conn: duckdb.DuckDBPyConnection, lines: Sequence[AccountLine]) -
 
 def count(conn: duckdb.DuckDBPyConnection) -> int:
     return conn.execute("SELECT COUNT(*) FROM silver_line").fetchone()[0]
+
+
+_XBRL_COLUMNS = (
+    "silver_id",
+    "content_sha256",
+    "retrieval_id",
+    "source_member",
+    "source_line_no",
+    "cik",
+    "entity_name",
+    "taxonomy",
+    "element",
+    "segments",
+    "period_start",
+    "period_end",
+    "fiscal_year",
+    "fiscal_period",
+    "value",
+    "unit",
+    "accession",
+    "form",
+    "filed",
+    "extractor",
+    "extractor_version",
+    "extraction_run_id",
+)
+
+_XBRL_INSERT = (
+    f"INSERT INTO silver_xbrl_line ({', '.join(_XBRL_COLUMNS)}) "
+    f"VALUES ({', '.join('?' * len(_XBRL_COLUMNS))}) "
+    "ON CONFLICT (silver_id) DO NOTHING"
+)
+
+
+def write_xbrl_lines(conn, lines) -> int:
+    """Grava linhas XBRL. Mesma disciplina de `write_lines`: idempotente.
+
+    Reprocessar o mesmo `companyfacts` e no-op, e nao duplicacao. E o que
+    permite re-buscar a SEC quantas vezes for preciso - o que e necessario,
+    porque um fato antigo ganha `filed` novo a cada 10-K que o repete como
+    comparativo, e essa e a reapresentacao no sentido do I1.
+    """
+    if not lines:
+        return 0
+    before = conn.execute("SELECT COUNT(*) FROM silver_xbrl_line").fetchone()[0]
+    conn.executemany(
+        _XBRL_INSERT,
+        [[getattr(line, coluna) for coluna in _XBRL_COLUMNS] for line in lines],
+    )
+    after = conn.execute("SELECT COUNT(*) FROM silver_xbrl_line").fetchone()[0]
+    return int(after - before)

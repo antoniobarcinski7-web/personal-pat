@@ -97,17 +97,31 @@ def test_o_loader_conhece_o_registro_de_adapters_mas_nao_um_regime():
 def test_so_o_resolver_e_a_raiz_de_composicao_tocam_a_camada_de_consulta():
     """`pat.query` e a porta do gold.
 
-    Dois arquivos podem atravessa-la: o resolver da CVM, que e o adaptador, e
-    `__init__.py`, que e a raiz de composicao - o lugar onde o sistema escolhe
-    com que fonte concreta vai falar. Qualquer terceiro arquivo aqui significa
-    que a camada semantica comecou a ler o gold por fora.
+    So podem atravessa-la os RESOLVERS - um por regime, que e o papel de
+    adaptador - e `__init__.py`, que e a raiz de composicao, o lugar onde o
+    sistema escolhe com que fontes concretas vai falar.
+
+    O conjunto cresceu na M5.6 com `us_gaap/resolver.py`, e crescer assim e o
+    comportamento esperado: cada jurisdicao nova traz UM resolver. O que o
+    teste continua impedindo e um arquivo que nao seja resolver nem raiz
+    aparecer aqui - seria a camada semantica lendo o gold por fora.
     """
     atravessam = {
         path.relative_to(SEMANTICS).as_posix()
         for path in SEMANTICS.rglob("*.py")
         if any(i.startswith("pat.query") for i in _imports(path))
     }
-    assert atravessam == {"__init__.py", "frameworks/cvm_dfp/resolver.py"}
+    assert atravessam == {
+        "__init__.py",
+        "frameworks/cvm_dfp/resolver.py",
+        "frameworks/us_gaap/resolver.py",
+    }
+    # E a regra por tras do conjunto, dita de forma que sobrevive ao proximo
+    # regime: todo arquivo que le `pat.query` ou e a raiz, ou e um resolver.
+    assert all(
+        caminho == "__init__.py" or caminho.endswith("/resolver.py")
+        for caminho in atravessam
+    )
 
 
 def test_registro_de_adapters_nao_arrasta_regime_na_importacao():

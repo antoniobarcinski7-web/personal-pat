@@ -38,16 +38,28 @@ def build_engine(
 ) -> Engine:
     """Motor ligado ao warehouse local.
 
-    Este e o unico ponto onde a camada semantica encontra a CVM: aqui se
-    escolhe o resolver. Trocar de fonte e trocar esta linha, nao a arquitetura.
+    Este e o unico ponto onde a camada semantica encontra uma fonte concreta:
+    aqui se escolhem os resolvers. Plugar um regime novo e acrescentar uma
+    linha neste dicionario - e foi literalmente isso que a M5.6 fez com o
+    us-gaap. Nenhum conceito, nenhuma metrica e nenhuma decomposicao mudou.
+
+    Os dois convivem no mesmo motor de proposito: o `entity_id` decide qual
+    mapeamento resolve, o mapeamento decide qual taxonomia, e a taxonomia
+    decide qual resolver. Uma pergunta sobre a Petrobras e outra sobre a Intel
+    passam pelo mesmo caminho e chegam a fontes diferentes sem que nada acima
+    saiba disso.
     """
     from pat import __version__
     from pat.query.asof import AsOf
     from pat.semantics.frameworks.cvm_dfp.resolver import CvmDfpResolver
+    from pat.semantics.frameworks.us_gaap.resolver import UsGaapResolver
 
-    resolver = CvmDfpResolver(AsOf(conn))
+    asof = AsOf(conn)
     return Engine(
-        resolvers={TaxonomyId.CVM_PLANO_PADRONIZADO: resolver},
+        resolvers={
+            TaxonomyId.CVM_PLANO_PADRONIZADO: CvmDfpResolver(asof),
+            TaxonomyId.US_GAAP_XBRL: UsGaapResolver(asof),
+        },
         mappings=mappings if mappings is not None else load_dir(mappings_dir or _default_dir()),
         registry=registry if registry is not None else default_registry(),
         source=source,

@@ -112,6 +112,51 @@ CREATE TABLE IF NOT EXISTS silver_line (
 CREATE INDEX IF NOT EXISTS idx_silver_company ON silver_line (cod_cvm, cd_conta, dt_fim_exerc);
 
 -- ---------------------------------------------------------------------------
+-- SILVER XBRL (Fase 5, M5.6): o analogo de `silver_line` no regime da SEC.
+--
+-- Tabela propria, e nao colunas novas em `silver_line`: aquela e uma linha de
+-- CSV da CVM, com escala de moeda, ORDEM_EXERC e codigo de conta. Um fato XBRL
+-- nao tem nenhuma das tres, e forcar os dois no mesmo formato deixaria metade
+-- das colunas nulas em cada linha - a forma mentindo sobre o conteudo.
+--
+-- `filed` e o knowledge_date do lado americano; `segments` carrega a dimensao
+-- e e o unico dado dimensional ESTRUTURADO do sistema.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS silver_xbrl_line (
+    silver_id         VARCHAR PRIMARY KEY,
+    content_sha256    VARCHAR NOT NULL,
+    retrieval_id      VARCHAR NOT NULL,
+    source_member     VARCHAR NOT NULL,
+    source_line_no    INTEGER NOT NULL,
+
+    cik               VARCHAR NOT NULL,
+    entity_name       VARCHAR NOT NULL,
+
+    taxonomy          VARCHAR NOT NULL,
+    element           VARCHAR NOT NULL,
+    segments          VARCHAR NOT NULL DEFAULT '',
+
+    period_start      DATE,
+    period_end        DATE NOT NULL,
+    fiscal_year       INTEGER,
+    fiscal_period     VARCHAR,
+
+    value             DECIMAL(38,10) NOT NULL,
+    unit              VARCHAR NOT NULL,
+
+    accession         VARCHAR NOT NULL,
+    form              VARCHAR NOT NULL,
+    filed             DATE NOT NULL,
+
+    extractor         VARCHAR NOT NULL,
+    extractor_version VARCHAR NOT NULL,
+    extraction_run_id VARCHAR NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_silver_xbrl
+    ON silver_xbrl_line (cik, element, period_end, filed);
+
+-- ---------------------------------------------------------------------------
 -- GOLD: fatos bitemporais. APPEND-ONLY - nunca ha UPDATE.
 -- Reapresentacao nao sobrescreve nada: e uma linha nova com knowledge_date
 -- posterior. A diferenca entre as duas e informacao, e permanece consultavel.
