@@ -1,0 +1,193 @@
+# Intel Corporation (CIK 0000050863, ticker INTC).
+#
+# O PRIMEIRO mapeamento fora do Brasil. Conferido contra o `companyfacts` da
+# SEC ja no bronze (sha256 70056711..., 4,3 MB), nos exercicios FY2023
+# (findo em 2023-12-30) e FY2024 (findo em 2024-12-28).
+#
+# Nao ha mapeamento de familia aqui, e isso e deliberado: no Brasil a CVM
+# publica um plano de contas PADRONIZADO, entao uma familia cobre quase toda
+# companhia nao financeira. O us-gaap nao padroniza a escolha de elemento -
+# cada emissor escolhe entre dezenas de elementos validos para a mesma linha.
+# Uma "familia us-gaap" seria uma suposicao sobre o que a proxima companhia
+# escolheu, que e exatamente o casamento por semelhanca que este projeto
+# recusa. Cada emissor americano ganha o seu arquivo.
+#
+# O EXERCICIO NAO FECHA EM 31/12. A Intel usa ano fiscal de 52/53 semanas,
+# encerrado no ultimo sabado de dezembro. Toda consulta tem que usar o
+# `period_end` real - 2024-12-28, 2023-12-30 - e nao a data de calendario.
+
+mapping_id      = "us:cik:0000050863"
+mapping_version = "v1"
+framework       = "us_gaap"
+taxonomy        = "us-gaap.xbrl"
+jurisdiction    = "US"
+source          = "sec.companyfacts"
+entity_id       = "us:cik:0000050863"
+
+verified_by      = "antonio.barcinski"
+verified_against = "SEC companyfacts CIK 0000050863, FY2023 e FY2024, 10-K"
+
+# ---------------------------------------------------------------------------
+# Receita
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "revenue_net"
+fidelity   = "exact"
+equivalence_basis = """
+A Intel NAO usa `Revenues`, que seria o elemento obvio, e nem `SalesRevenueNet`. \
+Ela usa `RevenueFromContractWithCustomerExcludingAssessedTax`, que e o elemento \
+do ASC 606 para receita de contratos com clientes liquida de tributos cobrados \
+de terceiros - exatamente a definicao de `revenue_net`: receita reconhecida no \
+periodo, liquida de impostos sobre venda.
+
+Este binding e a razao pela qual equivalencia e AFIRMADA e nunca deduzida. Um \
+sistema que casasse elemento por semelhanca de nome procuraria `Revenues`, nao \
+acharia, e concluiria que a Intel nao publica receita - ou pior, acharia algum \
+elemento parecido de outra grandeza e devolveria um numero errado com \
+confianca.
+
+Conferido: FY2023 US$ 54.228 MM, FY2024 US$ 53.101 MM. Os dois batem com a \
+demonstracao de resultado do 10-K.
+
+Positivo na origem, ja na convencao do conceito; sign=+1.
+"""
+[[binding.line]]
+element   = "RevenueFromContractWithCustomerExcludingAssessedTax"
+statement = "income"
+sign      = 1
+label_as_reported = "Net revenue"
+
+# ---------------------------------------------------------------------------
+# Custo
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "cogs"
+fidelity   = "exact"
+equivalence_basis = """
+`CostOfGoodsAndServicesSold` e o custo dos bens e servicos vendidos atribuivel \
+a receita do periodo. A Intel nao usa `CostOfRevenue`, que e o outro elemento \
+valido para a mesma linha - de novo, a escolha e do emissor e nao ha como \
+deduzi-la.
+
+O elemento e publicado POSITIVO (US$ 32.517 MM em FY2023), e a convencao do \
+conceito `cogs` tambem e "positivo = despesa". Sign=+1, sem inversao.
+
+Conferido pela identidade da propria demonstracao: 54.228 - 32.517 = 21.711, \
+que e exatamente o `GrossProfit` publicado em FY2023. Em FY2024: \
+53.101 - 35.756 = 17.345, idem. As duas fecham na casa do milhao.
+"""
+[[binding.line]]
+element   = "CostOfGoodsAndServicesSold"
+statement = "income"
+sign      = 1
+label_as_reported = "Cost of sales"
+
+# ---------------------------------------------------------------------------
+# Lucro bruto
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "gross_profit"
+fidelity   = "exact"
+equivalence_basis = """
+`GrossProfit` publicado diretamente pela Intel, e nao derivado aqui. Preferir o \
+publicado ao calculado e a mesma disciplina de `ebit@v1`: o que a companhia \
+apresenta e o que o sistema le, e uma divergencia entre publicado e calculado e \
+informacao - nao algo a normalizar em silencio.
+
+Conferido: FY2023 US$ 21.711 MM, FY2024 US$ 17.345 MM.
+"""
+[[binding.line]]
+element   = "GrossProfit"
+statement = "income"
+sign      = 1
+label_as_reported = "Gross margin"
+
+# ---------------------------------------------------------------------------
+# Despesas operacionais
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "operating_expenses_net"
+fidelity   = "exact"
+equivalence_basis = """
+`OperatingExpenses` e o total das despesas operacionais entre o lucro bruto e o \
+resultado operacional: P&D, MG&A, reestruturacao e impairment. Publicado \
+POSITIVO (US$ 21.618 MM em FY2023), na mesma convencao do conceito \
+("positivo = despesa liquida"). Sign=+1.
+
+Conferido pela identidade: 21.711 - 21.618 = 93, que e exatamente o \
+`OperatingIncomeLoss` publicado em FY2023. Em FY2024: 17.345 - 29.023 = \
+-11.678, idem.
+
+O salto de 21.618 para 29.023 entre os dois exercicios nao e ruido: FY2024 \
+carrega impairment e reestruturacao relevantes. O sistema nao os separa aqui - \
+`operating_expenses_net` e a linha como reportada, e isolar nao recorrente \
+seria outro conceito, com outro binding.
+"""
+[[binding.line]]
+element   = "OperatingExpenses"
+statement = "income"
+sign      = 1
+label_as_reported = "Total operating expenses"
+
+# ---------------------------------------------------------------------------
+# Resultado operacional
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "ebit_reported"
+fidelity   = "exact"
+equivalence_basis = """
+`OperatingIncomeLoss` e o resultado operacional como a Intel o apresenta, antes \
+do resultado financeiro e dos tributos sobre o lucro. E exatamente \
+`ebit_reported`, e segue a decisao A1 do projeto: o que esta acima da linha \
+operacional na apresentacao da companhia fica dentro.
+
+Conferido: FY2023 US$ 93 MM, FY2024 US$ -11.678 MM. O sinal negativo em FY2024 \
+e real - a Intel teve prejuizo operacional no exercicio - e atravessa o sistema \
+sem tratamento especial, como qualquer outro valor.
+"""
+[[binding.line]]
+element   = "OperatingIncomeLoss"
+statement = "income"
+sign      = 1
+label_as_reported = "Operating income (loss)"
+
+# ---------------------------------------------------------------------------
+# Depreciacao e amortizacao que passou pelo resultado
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+A Intel NAO publica `DepreciationDepletionAndAmortization` nem \
+`DepreciationAndAmortization` como linha anual. Ela reporta os dois componentes \
+SEPARADAMENTE na conciliacao do fluxo de caixa: `Depreciation` e \
+`AmortizationOfIntangibleAssets`. Este binding soma os dois, com sign=+1 em \
+cada.
+
+Ambos sao reversoes somadas de volta ao lucro liquido na conciliacao do fluxo \
+de caixa indireto - ou seja, sao por construcao a despesa que passou pelo \
+RESULTADO e nao consumiu caixa. E isso que define `d_and_a_pnl`, e por isso a \
+fidelidade e exata e nao aproximada: nao ha estimativa nem proxy aqui, ha duas \
+linhas publicadas cuja soma e a grandeza pedida.
+
+Conferido:
+  FY2023  7.847 + 1.755 = 9.602 MM
+  FY2024  9.951 + 1.428 = 11.379 MM
+
+Cuidado registrado, porque um leitor futuro vai se perguntar: nao se deve \
+somar `AccumulatedDepreciation...` a nada disso - aquilo e saldo acumulado de \
+balanco, e nao fluxo do periodo. Os elementos com `FiniteLivedIntangibleAssets \
+AmortizationExpenseNextTwelveMonths` e parentes tambem ficam de fora: sao \
+PROJECAO de amortizacao futura, nao despesa realizada, e o proprio ingestor os \
+descarta por terem `filed` anterior ao fim do periodo.
+"""
+[[binding.line]]
+element   = "Depreciation"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Depreciation"
+[[binding.line]]
+element   = "AmortizationOfIntangibleAssets"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Amortization of intangible assets"

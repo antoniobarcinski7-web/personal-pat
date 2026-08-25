@@ -59,10 +59,15 @@ class SecBuildReport:
     entities_written: int = 0
     skipped_no_period: int = 0
     skipped_non_monetary: int = 0
+    skipped_forward_looking: int = 0
 
     @property
     def skipped_total(self) -> int:
-        return self.skipped_no_period + self.skipped_non_monetary
+        return (
+            self.skipped_no_period
+            + self.skipped_non_monetary
+            + self.skipped_forward_looking
+        )
 
 
 def _period_type(line: XbrlFactLine) -> PeriodType | None:
@@ -93,6 +98,7 @@ def build_facts_from_xbrl(
     facts: list[GoldFact] = []
     sem_periodo = 0
     nao_monetario = 0
+    prospectivos = 0
 
     for line in lines:
         if line.unit != currency:
@@ -105,6 +111,25 @@ def build_facts_from_xbrl(
             # tipo de periodo declarado no sistema - e inventar um faria uma
             # comparacao anual varrer nove meses sem avisar.
             sem_periodo += 1
+            continue
+
+        if line.filed < line.period_end:
+            # DIVULGACAO PROSPECTIVA, e nao dado corrompido.
+            #
+            # O XBRL da SEC carrega alguns elementos que sao projecao por
+            # construcao: `CashFlowHedgeGainLossToBeReclassifiedWithinTwelveMonths`
+            # tem `end` doze meses a frente do `filed`, porque e exatamente o que
+            # ele afirma - o que a companhia ESPERA reclassificar no ano
+            # seguinte. Idem a amortizacao de plano de pensao esperada.
+            #
+            # O contrato `Fact` recusa isso ("um numero nao pode ser conhecido
+            # antes de existir"), e o contrato esta certo: estes nao sao fatos
+            # historicos. Carimbar um `knowledge_date` posterior para faze-los
+            # caber transformaria projecao em fato realizado - a pior troca
+            # possivel numa base de research.
+            #
+            # Na Intel sao 6 de 25.354 linhas. Descartados e CONTADOS.
+            prospectivos += 1
             continue
 
         entity_id = Company.entity_id_from_cik(line.cik)
@@ -150,7 +175,9 @@ def build_facts_from_xbrl(
         )
 
     return facts, SecBuildReport(
-        skipped_no_period=sem_periodo, skipped_non_monetary=nao_monetario
+        skipped_no_period=sem_periodo,
+        skipped_non_monetary=nao_monetario,
+        skipped_forward_looking=prospectivos,
     )
 
 
@@ -180,6 +207,7 @@ def write_sec_facts(
         entities_written=entities_written,
         skipped_no_period=report.skipped_no_period,
         skipped_non_monetary=report.skipped_non_monetary,
+        skipped_forward_looking=report.skipped_forward_looking,
     )
 
 

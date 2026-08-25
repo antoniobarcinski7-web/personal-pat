@@ -287,7 +287,23 @@ sign = 1
 
 
 def _empresas_do_repositorio():
+    """Toda companhia mapeada, em qualquer regime."""
     return [m for m in load_dir(MAPPINGS_DIR).all() if m.entity_id]
+
+
+def _empresas_da_cvm():
+    """So as do regime da CVM.
+
+    Duas assercoes abaixo sao sobre a ESTRUTURA daquele regime - herdar de uma
+    familia e apontar D&A para o DFC - e nao sobre mapeamento em geral. A
+    M5.6 trouxe a Intel, que nao tem familia (o us-gaap nao padroniza a escolha
+    de elemento, entao uma "familia us-gaap" seria uma suposicao sobre o que a
+    proxima companhia escolheu) e cujo fluxo de caixa nao se chama DFC_MI.
+
+    Escopar e mais honesto do que afrouxar: as regras da CVM continuam
+    conferidas com o mesmo rigor, e o regime novo nao e julgado por elas.
+    """
+    return [m for m in _empresas_do_repositorio() if m.source.startswith("cvm")]
 
 
 @pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
@@ -304,7 +320,7 @@ def test_mapeamento_de_empresa_declara_o_que_conferiu(mapping):
             assert line.address.label_as_reported, (mapping.mapping_id, binding.concept_id)
 
 
-@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+@pytest.mark.parametrize("mapping", _empresas_da_cvm(), ids=lambda m: m.mapping_id)
 def test_mapeamento_de_empresa_herda_a_familia_e_e_confirmado(mapping):
     conjunto = load_dir(MAPPINGS_DIR)
     chain = conjunto.resolve(mapping.entity_id, source=mapping.source)
@@ -319,7 +335,7 @@ def test_mapeamento_de_empresa_herda_a_familia_e_e_confirmado(mapping):
     assert dono.is_default_for_source
 
 
-@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+@pytest.mark.parametrize("mapping", _empresas_da_cvm(), ids=lambda m: m.mapping_id)
 def test_override_de_d_and_a_aponta_para_o_fluxo_de_caixa(mapping):
     """Hoje o unico motivo de existir arquivo de empresa e a D&A do resultado,
     que a familia so aproxima pela DVA. Se um mapeamento de empresa sobrescrever
@@ -344,3 +360,22 @@ def test_cada_empresa_tem_uma_cadeia_com_hash_proprio():
         m.mapping_id: conjunto.resolve(m.entity_id, source=m.source).sha256 for m in empresas
     }
     assert len(set(hashes.values())) == len(empresas), hashes
+
+
+@pytest.mark.parametrize("mapping", _empresas_do_repositorio(), ids=lambda m: m.mapping_id)
+def test_toda_empresa_resolve_e_e_confirmada_no_seu_regime(mapping):
+    """A regra que vale em QUALQUER regime, e que sobreviveu a chegada do us-gaap.
+
+    Herdar de familia e detalhe da CVM: o plano padronizado brasileiro permite
+    que uma familia cubra quase toda companhia nao financeira. O us-gaap nao
+    padroniza a escolha de elemento, entao cada emissor americano ganha o seu
+    arquivo - e uma "familia us-gaap" seria uma suposicao sobre o que a proxima
+    companhia escolheu, que e o casamento por semelhanca que o projeto recusa.
+
+    O que continua obrigatorio nos dois: a cadeia resolve, e ela e conferida.
+    """
+    conjunto = load_dir(MAPPINGS_DIR)
+    chain = conjunto.resolve(mapping.entity_id, source=mapping.source)
+    assert chain is not None, mapping.mapping_id
+    assert chain.confirmed is True, mapping.mapping_id
+    assert chain.head.mapping_id == mapping.mapping_id
