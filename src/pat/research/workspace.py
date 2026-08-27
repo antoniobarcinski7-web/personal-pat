@@ -46,18 +46,52 @@ pergunta central da fase. Declara-lo pronto seria prometer o que ele nao
 faz."""
 
 
+SOURCE_BY_JURISDICTION = {
+    "BR": "cvm.dfp",
+    "US": "sec.companyfacts",
+}
+"""Fonte default por jurisdicao. Tabela DECLARADA, pela mesma razao que
+`Categoria -> DocumentKind` e uma tabela: derivar a fonte do prefixo de
+`entity_id` faria o identificador opaco deixar de ser opaco."""
+
+DEFAULT_JURISDICTION = "BR"
+
+
 def build_workspace(
     conn: duckdb.DuckDBPyConnection,
     *,
     entity_id: str,
     display_name: str,
     cod_cvm: int | None = None,
-    jurisdiction: str = "BR",
-    source: str = "cvm",
+    jurisdiction: str | None = None,
+    source: str | None = None,
     as_of: date | None = None,
 ) -> CompanyWorkspace:
+    """Estado de uma empresa. `jurisdiction` e `source` sao DERIVADOS da
+    entidade quando nao vem informados.
+
+    Os dois eram literais brasileiros no default. O mapeamento proprio vence
+    a familia em qualquer fonte, entao a companhia americana com TOML proprio
+    escapava - o que saia errado era o resto: `jurisdiction` ia para o
+    contrato como "BR" para uma empresa dos EUA, e a pendencia de corpus
+    mandava rodar `pat docs --cod-cvm --sync`, um comando que nao existe para
+    ela. Um remedio que nao funciona e pior que pendencia sem remedio: manda
+    o leitor gastar tempo antes de descobrir que nao era por ali.
+
+    O caso que quebrava de verdade e a companhia americana SEM mapeamento
+    proprio - o estado de toda empresa nova no primeiro dia -, que caia na
+    familia da CVM e falhava apontando para o lugar errado.
+    """
+    from pat.query.asof import AsOf
+
+    if jurisdiction is None:
+        ref = AsOf(conn).entity(entity_id)
+        jurisdiction = ref.jurisdiction if ref is not None else DEFAULT_JURISDICTION
+    if source is None:
+        source = SOURCE_BY_JURISDICTION.get(jurisdiction, SOURCE_BY_JURISDICTION["BR"])
+
     quantitativo, lacunas_q = _quantitative(conn, entity_id, source=source, as_of=as_of)
-    qualitativo, lacunas_t = _qualitative(conn, entity_id)
+    qualitativo, lacunas_t = _qualitative(conn, entity_id, jurisdiction=jurisdiction)
     lacunas = tuple(lacunas_q + lacunas_t)
 
     return CompanyWorkspace(
@@ -203,7 +237,7 @@ def _quantitative(
 
 
 def _qualitative(
-    conn: duckdb.DuckDBPyConnection, entity_id: str
+    conn: duckdb.DuckDBPyConnection, entity_id: str, *, jurisdiction: str = "BR"
 ) -> tuple[QualitativeCoverage, list[ReadinessGap]]:
     from pat.corpus.index import INDEX_VERSION
 
@@ -260,7 +294,19 @@ def _qualitative(
             ReadinessGap(
                 code=ReadinessCode.NO_DOCUMENTS,
                 message=f"nenhum documento qualitativo para {entity_id}",
-                remedy="pat docs --cod-cvm ... --sync --year ...",
+                remedy=(
+                    "pat docs --cod-cvm ... --sync --year ..."
+                    if jurisdiction == "BR"
+                    # Recusa HONESTA para a jurisdicao americana: nao ha
+                    # comando que resolva isso hoje. Sugerir `pat docs --sync`
+                    # aqui mandaria o leitor rodar algo que falha, e o remedio
+                    # de uma linha viraria uma pista falsa.
+                    else (
+                        "nao ha ingestao de corpus para esta jurisdicao: "
+                        "`sec.filing_doc` existe no provider mas nao tem "
+                        "consumidor, e o extrator so le PDF (filing e HTML)"
+                    )
+                ),
             )
         )
     elif not indexadas:

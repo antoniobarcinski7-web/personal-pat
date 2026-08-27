@@ -439,7 +439,6 @@ def cmd_company(args) -> int:
             entity_id=entity_id,
             display_name=denom,
             cod_cvm=getattr(args, "cod_cvm", None),
-            source=DEFAULT_SOURCE,
             as_of=args.as_of,
         )
         _print_workspace(workspace)
@@ -459,7 +458,17 @@ def _print_workspace(workspace) -> None:
     q = workspace.quantitative
     print("\nQUANTITATIVO")
     print(f"  fatos          {q.facts:,}")
-    print(f"  periodos       {', '.join(p.isoformat() for p in q.period_ends) or '-'}")
+    # A CONTAGEM primeiro, e so depois a amostra. A Intel tem 85 periodos no
+    # `companyfacts` (a SEC publica a serie inteira, nao so o exercicio), e
+    # despejar os 85 numa linha esconde o unico numero que interessa aqui -
+    # quantos sao - atras de uma parede de datas. Truncar sem dizer que
+    # truncou seria pior: a lista pareceria completa.
+    periodos = [p.isoformat() for p in q.period_ends]
+    if len(periodos) <= 8:
+        amostra = ", ".join(periodos) or "-"
+    else:
+        amostra = f"{', '.join(periodos[:3])} … {', '.join(periodos[-3:])}"
+    print(f"  periodos       {len(periodos)}  {amostra}")
     print(f"  escopos        {', '.join(q.scopes) or '-'}")
     marca_map = "conferido" if q.mapping_confirmed else "FAMILIA DEFAULT"
     print(f"  mapeamento     {q.mapping_id or '-'}  [{marca_map}]")
@@ -1098,11 +1107,28 @@ def _resolve_entity_arg(conn, args) -> tuple[str, str] | None:
     return ref.entity_id, ref.display_name
 
 
-def _entity_for_cod_cvm(conn, cod_cvm: int) -> tuple[str, str] | None:
-    """Compatibilidade fina sobre `_resolve_entity_arg`."""
-    from argparse import Namespace
+_SOURCE_BY_JURISDICTION = {
+    "BR": "cvm.dfp",
+    "US": "sec.companyfacts",
+}
+"""Fonte default por jurisdicao. Tabela DECLARADA, como `Categoria ->
+DocumentKind` em `parse/cvm_ipe.py` - e nao um prefixo de `entity_id` lido na
+hora, que faria o identificador opaco deixar de ser opaco."""
 
-    return _resolve_entity_arg(conn, Namespace(cod_cvm=cod_cvm, cik=None))
+
+def _default_source_for(conn, entity_id: str) -> str:
+    """Fonte default de uma entidade, pela jurisdicao que ela declara.
+
+    Existe porque `DEFAULT_SOURCE` e um literal brasileiro. Mapeamento proprio
+    sempre vence a familia, entao a Intel funcionava por sorte - o que
+    quebrava era a companhia SEM mapeamento proprio: ela caia na familia da
+    CVM e falhava depois, com um motivo que mandava o leitor olhar o lugar
+    errado. Jurisdicao desconhecida mantem o default historico.
+    """
+    ref = AsOf(conn).entity(entity_id)
+    if ref is None:
+        return DEFAULT_SOURCE
+    return _SOURCE_BY_JURISDICTION.get(ref.jurisdiction, DEFAULT_SOURCE)
 
 
 def _kinds(raw: list[str]):
@@ -1132,7 +1158,7 @@ def cmd_docs(args) -> int:
 
     if (conn := _open_readonly(args)) is None:
         return 1
-    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    resolved = _resolve_entity_arg(conn, args)
     if resolved is None:
         conn.close()
         return 1
@@ -1189,11 +1215,31 @@ def _docs_sync(args) -> int:
         return 1
 
     bronze, catalog, conn = _open(args)
-    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    resolved = _resolve_entity_arg(conn, args)
     if resolved is None:
         conn.close()
         return 1
     entity_id, denom = resolved
+
+    if args.cod_cvm is None:
+        # RECUSA NOMEADA, e nao um crash tres linhas adiante.
+        #
+        # O catalogo IPE e indexado por `cod_cvm`, entao `--sync` e brasileiro
+        # por construcao - nao por descuido. O lado americano ainda nao tem
+        # ingestao de corpus: `sec.filing_doc` resolve URL, mas nada o consome,
+        # e o extrator so le PDF (filing da SEC e HTML). Dizer isso aqui e o
+        # que impede a ausencia de ser lida como "a companhia nao publicou".
+        print(
+            f"{denom}: --sync exige --cod-cvm.\n"
+            "A sincronizacao de corpus le o catalogo IPE da CVM, que e indexado "
+            "por codigo CVM. Nao ha, ainda, ingestao de documento para a SEC: o "
+            "dataset `sec.filing_doc` existe no provider mas nao tem consumidor, "
+            "e o extrator atual so le PDF.\n"
+            "As consultas quantitativas da companhia continuam funcionando.",
+            file=sys.stderr,
+        )
+        conn.close()
+        return 1
 
     run = new_run(f"docs --sync --cod-cvm {args.cod_cvm} --year {args.year}")
     catalog.start_run(run)
@@ -1254,7 +1300,7 @@ def cmd_evidence(args) -> int:
         return 1
     if (conn := _open_readonly(args)) is None:
         return 1
-    resolved = _entity_for_cod_cvm(conn, args.cod_cvm)
+    resolved = _resolve_entity_arg(conn, args)
     if resolved is None:
         conn.close()
         return 1
@@ -1560,7 +1606,7 @@ def cmd_accounts(args) -> int:
             return 1
 
         rows = asof.accounts(
-            cod_cvm=args.cod_cvm,
+            entity_id=entity[0],
             statement=args.statement,
             period_end=date.fromisoformat(args.period_end),
             as_of=date.fromisoformat(args.as_of),
@@ -1570,11 +1616,31 @@ def cmd_accounts(args) -> int:
             print(f"nenhuma conta de {args.statement} para essa chave.")
             return 1
 
-        print(f"{entity[1]} ({args.cod_cvm}) · {args.statement} · {args.period_end}\n")
-        for row in rows:
-            profundidade = row.cd_conta.count(".")
-            recuo = "  " * profundidade
-            print(f"  {row.cd_conta:<14} {recuo}{row.ds_conta[:44]:<46} {row.value / 1_000_000:>14,.1f} MM")
+        print(f"{entity[1]} ({entity[0]}) · {args.statement} · {args.period_end}\n")
+
+        # O RECUO E DA CVM, e so dela: `3.04.05.01` codifica hierarquia no
+        # proprio codigo, e a arvore e o que deixa um humano achar a linha.
+        # Elemento us-gaap nao tem hierarquia no nome - indentar por ponto ali
+        # produziria uma arvore inventada, que e o tipo de forma que parece
+        # informacao e nao e.
+        enderecos = ["  " * r.cd_conta.count(".") + r.cd_conta for r in rows]
+        # `ds_conta` repete o elemento no us-gaap: a taxonomia nao publica
+        # rotulo separado da tag. Imprimir duas vezes so gasta a linha.
+        rotulos = ["" if r.ds_conta == r.cd_conta else r.ds_conta[:44] for r in rows]
+
+        # Colunas dimensionadas pelos DADOS. Uma largura fixa serve a uma
+        # jurisdicao e desalinha a outra: `3.01` tem 4 caracteres e
+        # `AccumulatedDepreciationDepletion...` tem 71.
+        # Teto na coluna do endereco: o us-gaap tem elemento de 100+ caracteres
+        # (`AdjustmentsToAdditionalPaidInCapitalSharebasedCompensation...`), e
+        # dimensionar pelo maior empurraria o valor de TODA linha para fora da
+        # tela por causa de uma. Quem passar do teto desalinha sozinho.
+        larg_end = min(max(len(e) for e in enderecos), 72)
+        larg_rot = max((len(r) for r in rotulos), default=0)
+
+        for endereco, rotulo, row in zip(enderecos, rotulos, rows, strict=True):
+            meio = f" {rotulo:<{larg_rot}}" if larg_rot else ""
+            print(f"  {endereco:<{larg_end}}{meio} {row.value / 1_000_000:>14,.1f} MM")
         print(f"\n{len(rows)} contas. Escolha a linha e escreva o binding com equivalence_basis.")
         return 0
     finally:
@@ -1595,10 +1661,20 @@ def cmd_mapping_check(args) -> int:
         from pat.semantics.check import OK, check_chain
         from pat.semantics.loader import load_dir
 
-        engine = build_engine(conn)
-        chain = load_dir().resolve(entity[0], source="cvm.dfp")
+        # A fonte default segue a JURISDICAO da entidade, e nao um literal.
+        # Fixar "cvm.dfp" aqui fazia uma companhia americana sem mapeamento
+        # proprio cair na familia brasileira - e falhar depois com um motivo
+        # que apontava para o lugar errado.
+        fonte = _default_source_for(conn, entity[0])
+        engine = build_engine(conn, source=fonte)
+        chain = load_dir().resolve(entity[0], source=fonte)
         if chain is None:
-            print(f"nenhum mapeamento cobre {entity[0]}.", file=sys.stderr)
+            print(
+                f"nenhum mapeamento cobre {entity[0]} na fonte {fonte!r}.\n"
+                "Escreva o TOML da companhia em `semantics/mappings/`, com "
+                "equivalence_basis em cada binding.",
+                file=sys.stderr,
+            )
             return 1
 
         resolver = engine.resolver_for(chain.head.taxonomy)
@@ -1611,7 +1687,7 @@ def cmd_mapping_check(args) -> int:
             scope=_scope(args),
         )
 
-        print(f"{entity[1]} ({args.cod_cvm}) · cadeia {' <- '.join(m.mapping_id for m in chain.chain)}")
+        print(f"{entity[1]} ({entity[0]}) · cadeia {' <- '.join(m.mapping_id for m in chain.chain)}")
         if not chain.confirmed:
             print("  ATENCAO: sem mapeamento proprio; usando a familia default.\n")
         else:
@@ -2289,7 +2365,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     def _metric_key(parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--cod-cvm", dest="cod_cvm", type=int, required=True)
+        # As duas jurisdicoes entram pela mesma porta. Nenhum dos dois e
+        # `required`: `_resolve_entity_arg` e que cobra um deles, com a mesma
+        # mensagem em todo comando.
+        parser.add_argument("--cod-cvm", dest="cod_cvm", type=int,
+                            help="companhia brasileira (CVM)")
+        parser.add_argument("--cik", help="companhia americana (SEC)")
         parser.add_argument("--period-end", dest="period_end", required=True, help="AAAA-MM-DD")
         parser.add_argument(
             "--as-of", dest="as_of", required=True, help="AAAA-MM-DD; nao ha consulta sem ela"
@@ -2475,7 +2556,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- Fase 5 M5.1: corpus qualitativo ------------------------------------
     p_docs = sub.add_parser("docs", help="documentos qualitativos de uma empresa")
-    p_docs.add_argument("--cod-cvm", type=int, required=True)
+    p_docs.add_argument("--cod-cvm", type=int,
+                        help="companhia brasileira (CVM); exigido por --sync")
+    p_docs.add_argument("--cik", help="companhia americana (SEC); leitura apenas")
     p_docs.add_argument(
         "--sync",
         action="store_true",
@@ -2493,7 +2576,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_docs.set_defaults(func=cmd_docs)
 
     p_ev = sub.add_parser("evidence", help="trechos verbatim, com procedencia (sem LLM)")
-    p_ev.add_argument("--cod-cvm", type=int, required=True)
+    p_ev.add_argument("--cod-cvm", type=int, help="companhia brasileira (CVM)")
+    p_ev.add_argument("--cik", help="companhia americana (SEC)")
     p_ev.add_argument("--query", required=True, help="termos de busca, separados por espaco")
     p_ev.add_argument("--as-of", type=date.fromisoformat, required=True)
     p_ev.add_argument("--kind", action="append", default=[])
