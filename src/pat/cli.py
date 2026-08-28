@@ -2605,6 +2605,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_runs.set_defaults(func=cmd_runs)
 
+    # A camada Opportunity monta o proprio grupo de subcomandos. Ela mora num
+    # arquivo separado porque tem ciclo de vida proprio, e porque `cli.py` ja
+    # passou de 2600 linhas.
+    from pat.cli_opportunity import add_opportunity_parser
+
+    add_opportunity_parser(sub)
+
     return parser
 
 
