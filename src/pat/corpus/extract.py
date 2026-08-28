@@ -49,18 +49,37 @@ from pat.contracts.corpus import (
     LocatorScheme,
     UnitLocator,
 )
+from pat.corpus.extract_html import (
+    HTML_EXTRACTION_VERSION,
+    HTML_MEDIA_TYPE,
+    extract_html_document,
+    extract_html_text,
+)
 from pat.corpus.identity import unit_id
 
 __all__ = [
     "EXTRACTION_VERSION",
+    "HTML_EXTRACTION_VERSION",
+    "HTML_MEDIA_TYPE",
     "MAX_UNIT_CHARS",
     "PDF_MEDIA_TYPE",
+    "XHTML_MEDIA_TYPE",
     "extract",
+    "extract_html_text",
     "extract_pdf_page_texts",
     "sniff_media_type",
 ]
 
 PDF_MEDIA_TYPE = "application/pdf"
+XHTML_MEDIA_TYPE = "application/xhtml+xml"
+"""iXBRL. Tipo PROPRIO, e nao "text/html": o documento e mesmo XHTML, e
+registrar o tipo errado no `SourceDocument` faria a procedencia mentir
+sobre o que foi baixado. O extrator e o mesmo - o texto visivel se deriva
+igual -, e a distincao vive no registro, nao no processamento."""
+
+_SNIFF_BYTES = 4096
+"""Janela de sniff. 1 KB nao alcancava a raiz `<html` de um iXBRL, que vem
+depois de varios comentarios da ferramenta geradora."""
 
 _ALGORITHM_VERSION = "1"
 """Versao do algoritmo de blocos deste modulo.
@@ -98,21 +117,41 @@ def sniff_media_type(payload: bytes) -> str | None:
         return PDF_MEDIA_TYPE
     if payload.startswith(b"PK\x03\x04"):
         return "application/zip"
-    head = payload[:1024].lstrip().lower()
+    head = payload[:_SNIFF_BYTES].lstrip().lower()
     if head.startswith(b"<!doctype html") or head.startswith(b"<html"):
         return "text/html"
+    # Inline XBRL: o 10-K da SEC e XHTML com declaracao XML e comentarios da
+    # ferramenta que o gerou antes da raiz. Um sniff que so olhasse o primeiro
+    # token classificaria todo arquivamento americano como desconhecido - foi
+    # exatamente o que aconteceu na primeira sincronizacao real.
+    #
+    # A checagem e estreita de proposito: exige declaracao XML E uma raiz
+    # `<html` no inicio do documento. "Tem <html em algum lugar" casaria com
+    # qualquer XML que mencione HTML num atributo.
+    if head.startswith(b"<?xml") and b"<html" in head:
+        return XHTML_MEDIA_TYPE
     return None
 
 
 def extract(document_id: str, payload: bytes) -> ExtractionOutcome:
-    """Bytes -> unidades, ou uma falha nomeada. Nunca as duas, nunca nenhuma."""
+    """Bytes -> unidades, ou uma falha nomeada. Nunca as duas, nunca nenhuma.
+
+    O despacho e por tipo REAL dos bytes, e cada tipo tem extrator com versao
+    propria. Nao ha conversao entre formatos: um HTML nao vira PDF para caber
+    no extrator antigo, porque a conversao seria mais um artefato entre a
+    fonte e a citacao - e a citacao deixaria de ser fatia do que a companhia
+    publicou.
+    """
     media_type = sniff_media_type(payload)
+    if media_type in (HTML_MEDIA_TYPE, XHTML_MEDIA_TYPE):
+        return _extract_html(document_id, payload)
     if media_type != PDF_MEDIA_TYPE:
         return _failed(
             document_id,
             ExtractionFailureReason.UNSUPPORTED_MEDIA_TYPE,
             f"tipo detectado dos bytes: {media_type or 'desconhecido'}; "
-            f"o extrator da M5.1 le {PDF_MEDIA_TYPE}",
+            f"os extratores existentes leem {PDF_MEDIA_TYPE}, {HTML_MEDIA_TYPE} "
+            f"e {XHTML_MEDIA_TYPE}",
             remedy=(
                 "Escrever um extrator para este tipo, com versao propria. "
                 "Nao ha conversao automatica, de proposito."
@@ -176,6 +215,89 @@ def extract(document_id: str, payload: bytes) -> ExtractionOutcome:
     return ExtractionOutcome(
         document_id=document_id,
         extraction_version=EXTRACTION_VERSION,
+        units=tuple(units),
+    )
+
+
+_ULTIMO_CAMINHO = "html[1]"
+"""Caminho de recurso quando o documento tem mais blocos que marcas.
+
+Acontece quando um bloco longo e quebrado em sentenca: as fatias herdam a
+posicao, e nao ha elemento proprio para elas. Apontar para a raiz e menos
+preciso e honesto; inventar `p[999]` apontaria para um no que nao existe."""
+
+
+def _extract_html(document_id: str, payload: bytes) -> ExtractionOutcome:
+    """HTML -> unidades, pelo MESMO algoritmo de blocos do PDF.
+
+    Reusar o algoritmo e a escolha certa e nao preguica: "bloco separado por
+    linha em branco, quebrado em fronteira de sentenca quando muito longo" e
+    uma decisao sobre o tamanho de uma citacao util, e ela nao depende do
+    formato de origem. Dois algoritmos divergiriam, e a mesma frase citada de
+    um release em PDF e de um arquivamento em HTML sairia com recortes
+    diferentes.
+
+    O texto derivado inteiro entra como uma unica "pagina". Um arquivamento
+    nao tem paginas - a paginacao do PDF e propriedade do meio, e inventar
+    paginas aqui produziria um `locator` que nao aponta para nada conferivel.
+    """
+    try:
+        texto, marcas = extract_html_document(payload)
+    except Exception as exc:  # noqa: BLE001 - qualquer falha vira motivo nomeado
+        return _failed(
+            document_id,
+            ExtractionFailureReason.EXTRACTOR_ERROR,
+            f"{type(exc).__name__}: {exc}",
+            remedy="Documento fica registrado como nao extraido; o blob continua no bronze.",
+        )
+
+    units: list[DocumentUnit] = []
+    caminhos = [caminho for _, caminho in marcas]
+    for ordinal, (start, end) in enumerate(_blocks(texto)):
+        trecho = texto[start:end]
+        locator = UnitLocator(
+            scheme=LocatorScheme.HTML_NODE,
+            page=1,
+            block=ordinal,
+            # O caminho do n-esimo paragrafo, quando ha marca para ele. Blocos
+            # longos quebrados em sentenca compartilham o caminho do bloco de
+            # origem, o que e correto: eles vem do mesmo elemento.
+            node_path=caminhos[ordinal] if ordinal < len(caminhos) else _ULTIMO_CAMINHO,
+            char_start=start,
+            char_end=end,
+        )
+        units.append(
+            DocumentUnit(
+                unit_id=unit_id(
+                    document_id=document_id,
+                    extraction_version=HTML_EXTRACTION_VERSION,
+                    locator=locator,
+                ),
+                document_id=document_id,
+                ordinal=ordinal,
+                locator=locator,
+                text=trecho,
+                char_count=len(trecho),
+                extraction_version=HTML_EXTRACTION_VERSION,
+            )
+        )
+
+    if not units:
+        return _failed(
+            document_id,
+            ExtractionFailureReason.NO_TEXT_LAYER,
+            f"o HTML foi lido e nao produziu texto ({len(payload)} bytes de entrada)",
+            remedy=(
+                "Tipicamente um arquivamento que e so um invólucro apontando "
+                "para exibicoes, ou um documento cujo conteudo esta em imagem. "
+                "NAO ha fallback para OCR. O documento fica registrado como nao "
+                "extraido."
+            ),
+        )
+
+    return ExtractionOutcome(
+        document_id=document_id,
+        extraction_version=HTML_EXTRACTION_VERSION,
         units=tuple(units),
     )
 

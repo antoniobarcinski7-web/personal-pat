@@ -39,12 +39,18 @@ AS_OF = date(2025, 6, 30)
 # -- o criterio que define a O4 ---------------------------------------------
 
 
-def test_o_provider_americano_recusa_com_motivo_em_vez_de_lista_vazia(us_warehouse):
+def test_o_provider_americano_recusa_com_motivo_em_vez_de_lista_vazia(us_warehouse, tmp_path):
     """Lista vazia seria uma afirmacao sobre o MUNDO. O fato e sobre o SISTEMA.
 
     As duas coisas chegam ao agente como a mesma ausencia e pedem acoes
     opostas: uma entra na tese como achado, a outra e uma lacuna do PAT.
+
+    O MOTIVO da recusa mudou na N2 - a descoberta existe, e o que falta aqui e
+    o indice no bronze -, e o invariante nao mudou: nunca uma tupla vazia
+    quando o sistema nao olhou.
     """
+    from pat.store.bronze import BronzeStore
+
     provider = provider_for("US")
     perfil = profile_for(us_warehouse, INTEL_ENTITY)
 
@@ -53,30 +59,46 @@ def test_o_provider_americano_recusa_com_motivo_em_vez_de_lista_vazia(us_warehou
         company=perfil,
         published_from=date(2020, 1, 1),
         published_to=AS_OF,
+        bronze=BronzeStore(tmp_path / "bronze"),
     )
 
     assert isinstance(resposta, ProviderUnavailable)
     assert resposta.capability is ProviderCapability.DISCOVER
-    assert resposta.reason is ProviderUnavailableReason.NOT_IMPLEMENTED
-    # O remedio nomeia o trabalho que falta, e nao apenas que ele falta.
-    assert "parse" in resposta.remedy.lower()
-    assert resposta.message
+    assert resposta.reason is ProviderUnavailableReason.CATALOG_MISSING
+    # O remedio nomeia o comando que resolve, e nao apenas que falta algo.
+    assert "pat fetch sec.submissions" in resposta.remedy
 
 
-def test_o_provider_americano_para_na_extracao_e_diz_onde(us_warehouse):
-    """A lacuna e no formato, e nao na busca. A diferenca diz a quem for
-    terminar o trabalho por onde comecar."""
-    provider = USDocumentProvider()
-    resposta = provider.fetch(
+def test_a_descoberta_americana_exige_bronze_e_diz_isso(us_warehouse):
+    """Sem bronze nao ha indice para ler, e a recusa nomeia o que falta -
+    em vez de devolver zero documentos como se a companhia nao arquivasse."""
+    resposta = USDocumentProvider().discover(
+        us_warehouse,
+        company=profile_for(us_warehouse, INTEL_ENTITY),
+        published_from=date(2020, 1, 1),
+        published_to=AS_OF,
+    )
+    assert isinstance(resposta, ProviderUnavailable)
+    assert resposta.reason is ProviderUnavailableReason.CATALOG_MISSING
+    assert "bronze" in resposta.message
+
+
+def test_a_busca_americana_exige_a_montagem_completa(us_warehouse):
+    """`fetch` sem bronze/catalogo/registro/corrida recusa nomeando os quatro.
+
+    Ate a N2 este metodo recusava em EXTRACT, porque o extrator nao lia HTML.
+    Agora le, e a unica recusa que sobra e a de montagem - a mesma do lado
+    brasileiro, palavra por palavra.
+    """
+    resposta = USDocumentProvider().fetch(
         us_warehouse,
         company=profile_for(us_warehouse, INTEL_ENTITY),
         documents=(),
     )
     assert isinstance(resposta, ProviderUnavailable)
-    assert resposta.capability is ProviderCapability.EXTRACT
-    assert resposta.reason is ProviderUnavailableReason.UNSUPPORTED_MEDIA
-    # E o remedio recusa explicitamente o atalho.
-    assert "ocr" in resposta.remedy.lower()
+    assert resposta.capability is ProviderCapability.FETCH
+    assert resposta.reason is ProviderUnavailableReason.NEEDS_NETWORK
+    assert "pat docs --sync" in resposta.remedy
 
 
 def test_o_perfil_nao_pode_ficar_calado_sobre_uma_capacidade():
@@ -138,14 +160,24 @@ def test_o_provider_brasileiro_declara_as_tres_capacidades():
     assert DocumentKind.PERFORMANCE_REPORT in perfil.kinds_supported
 
 
-def test_o_provider_americano_declara_o_que_tem_e_o_que_falta():
-    perfil = provider_for("US").profile
-    assert perfil.can(ProviderCapability.FETCH)
-    assert not perfil.can(ProviderCapability.DISCOVER)
-    assert not perfil.can(ProviderCapability.EXTRACT)
-    assert perfil.why_not(ProviderCapability.DISCOVER).remedy
-    assert perfil.why_not(ProviderCapability.EXTRACT).remedy
-    assert perfil.why_not(ProviderCapability.FETCH) is None
+def test_os_dois_providers_declaram_as_mesmas_capacidades():
+    """Desde a N2 o adapter americano nao e mais parcial.
+
+    O teste compara os dois em vez de afirmar cada um: e o que faz uma
+    regressao no lado americano aparecer como ASSIMETRIA, que e como ela seria
+    percebida por quem usa - "no Brasil funciona e nos EUA nao".
+    """
+    br = provider_for("BR").profile
+    us = provider_for("US").profile
+
+    for capacidade in ProviderCapability:
+        assert br.can(capacidade), capacidade
+        assert us.can(capacidade), capacidade
+        assert us.why_not(capacidade) is None
+    assert us.missing == ()
+    # A cobertura de TIPOS continua diferente, e isso e real: as duas origens
+    # publicam coisas diferentes, e igualar as listas seria mentir.
+    assert us.kinds_supported != br.kinds_supported
 
 
 def test_nao_existe_provider_default():
@@ -251,7 +283,18 @@ def test_o_inventario_carrega_o_perfil_do_provider(corpus_conn):
 
 
 def test_o_inventario_americano_mostra_zero_com_a_lacuna_junto(us_warehouse):
-    """Zero documentos e a lacuna, lado a lado. Um sem o outro engana."""
+    """Zero documentos, e o inventario diz de que jurisdicao esta falando.
+
+    Ate a N2 o zero vinha acompanhado de `provider.missing` - a lacuna
+    declarada. O adapter deixou de ser parcial, entao a lacuna sumiu; o que
+    NAO pode sumir e a distincao entre "o corpus desta companhia esta vazio" e
+    "olhei outra companhia". Por isso o teste passa a exigir a identidade no
+    inventario, que e o que sobrou de conferivel neste ponto.
+
+    A garantia de "nunca lista vazia sem motivo" continua testada, e no lugar
+    certo: em `test_o_provider_americano_recusa_com_motivo_em_vez_de_lista_vazia`,
+    onde a descoberta e de fato chamada.
+    """
     inv = inventory(
         us_warehouse,
         company=profile_for(us_warehouse, INTEL_ENTITY),
@@ -259,11 +302,9 @@ def test_o_inventario_americano_mostra_zero_com_a_lacuna_junto(us_warehouse):
         provider=provider_for("US"),
     )
     assert inv.documents == ()
-    assert inv.provider.missing, "o zero vem acompanhado do motivo"
-    assert {m.capability for m in inv.provider.missing} == {
-        ProviderCapability.DISCOVER,
-        ProviderCapability.EXTRACT,
-    }
+    assert inv.entity_id == INTEL_ENTITY
+    assert inv.jurisdiction == "US"
+    assert inv.provider.missing == (), "o adapter americano nao e mais parcial"
 
 
 def test_o_inventario_preserva_a_procedencia_exigida(corpus_conn):

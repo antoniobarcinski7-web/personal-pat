@@ -30,7 +30,13 @@ from pat.contracts.corpus import (
     SourceDocument,
 )
 from pat.contracts.lineage import Run
-from pat.corpus.extract import EXTRACTION_VERSION, extract, extract_pdf_page_texts
+from pat.corpus.extract import (
+    EXTRACTION_VERSION,
+    HTML_EXTRACTION_VERSION,
+    extract,
+    extract_html_text,
+    extract_pdf_page_texts,
+)
 from pat.corpus.index import build_index
 from pat.ingest import ingest_dataset
 from pat.parse.cvm_ipe import EXTRACTOR_VERSION, IpeCatalogEntry, parse_catalog
@@ -43,7 +49,9 @@ __all__ = [
     "CATALOG_DATASET",
     "DOCUMENT_DATASET",
     "SyncOutcome",
+    "SUBMISSIONS_DATASET",
     "catalog_entries",
+    "sec_candidates",
     "sync_documents",
     "verify_unit",
 ]
@@ -114,26 +122,36 @@ def sync_documents(
     conn: duckdb.DuckDBPyConnection,
     *,
     entity_id: str,
-    entries: list[IpeCatalogEntry],
+    entries: list,
     registry: Registry,
     bronze: BronzeStore,
     catalog: Catalog,
     run: Run,
     limit: int | None = None,
 ) -> SyncOutcome:
-    """Catalogo -> bronze -> documentos -> unidades -> indice.
+    """Candidatos -> bronze -> documentos -> unidades -> indice.
 
     Idempotente em cada etapa. Um documento cujos bytes ja estao no bronze
     ainda gera um `Retrieval` novo - saber que o conteudo *nao* mudou naquela
     data e informacao - mas nao reextrai nem reindexa.
+
+    `entries` sao `DocumentCandidate`, e o tipo e REGIME-NEUTRO de proposito:
+    o catalogo IPE da CVM e o historico de arquivamentos da SEC descrevem a
+    mesma coisa com vocabularios diferentes. Aceitar `IpeCatalogEntry` aqui
+    obrigaria um ramo por regime, e o terceiro regime pediria um terceiro ramo.
+    Por compatibilidade, uma entrada do IPE e convertida na entrada da funcao.
     """
-    outcome = SyncOutcome(entity_id=entity_id, catalog_entries=len(entries))
-    selected = entries if limit is None else entries[:limit]
+    candidatos = [
+        entry.as_candidate() if isinstance(entry, IpeCatalogEntry) else entry
+        for entry in entries
+    ]
+    outcome = SyncOutcome(entity_id=entity_id, catalog_entries=len(candidatos))
+    selected = candidatos if limit is None else candidatos[:limit]
 
     for entry in selected:
         results = ingest_dataset(
-            DOCUMENT_DATASET,
-            {"url": entry.url, "protocolo": entry.protocolo},
+            entry.dataset_id,
+            entry.fetch_params,
             registry=registry,
             store=bronze,
             catalog=catalog,
@@ -143,22 +161,36 @@ def sync_documents(
             outcome.documents_fetched += 1
             document_id = result.document.content_sha256
 
-            if corpus_store.read_document(conn, document_id) is not None:
+            payload = bronze.read(document_id)
+            ja_existe = corpus_store.read_document(conn, document_id) is not None
+
+            if ja_existe and corpus_store.units_for_document(conn, document_id):
+                # Documento conhecido E extraido: nada a fazer. O `Retrieval`
+                # novo ja foi gravado - saber que o conteudo nao mudou naquela
+                # data e informacao.
                 outcome.skipped_existing += 1
                 continue
 
-            payload = bronze.read(document_id)
-            document = _to_source_document(
-                entry,
-                entity_id=entity_id,
-                document_id=document_id,
-                payload=payload,
-                retrieval_id=result.retrieval.retrieval_id,
-                source_tier=result.retrieval.source_tier,
-                first_seen_at=result.document.first_seen_at,
-                first_seen_run_id=run.run_id,
-            )
-            outcome.documents_new += corpus_store.write_documents(conn, [document])
+            if ja_existe:
+                # Conhecido e SEM unidade: extracao falhou antes. Tentar de
+                # novo e o comportamento certo - o extrator pode ter mudado
+                # desde entao, e foi exatamente o que aconteceu quando o
+                # extrator de HTML passou a existir. Pular aqui deixaria o
+                # documento permanentemente nao citavel por causa de uma
+                # limitacao que ja tinha sido removida.
+                outcome.skipped_existing += 1
+            else:
+                document = _to_source_document(
+                    entry,
+                    entity_id=entity_id,
+                    document_id=document_id,
+                    payload=payload,
+                    retrieval_id=result.retrieval.retrieval_id,
+                    source_tier=result.retrieval.source_tier,
+                    first_seen_at=result.document.first_seen_at,
+                    first_seen_run_id=run.run_id,
+                )
+                outcome.documents_new += corpus_store.write_documents(conn, [document])
 
             extraction = extract(document_id, payload)
             if extraction.failure is not None:
@@ -174,7 +206,7 @@ def sync_documents(
 
 
 def _to_source_document(
-    entry: IpeCatalogEntry,
+    entry,
     *,
     entity_id: str,
     document_id: str,
@@ -184,6 +216,14 @@ def _to_source_document(
     first_seen_at: datetime,
     first_seen_run_id: str,
 ) -> SourceDocument:
+    """`DocumentCandidate` + bytes -> `SourceDocument`.
+
+    O `document_id` so pode ser calculado aqui: ele E o sha256 do conteudo, e
+    e o que faz uma reapresentacao virar documento novo em vez de edicao do
+    antigo. O `media_type` tambem sai dos BYTES, e nao do que a origem
+    declarou - a CVM responde `text/html` para PDF, e acreditar no header
+    classificaria o corpus inteiro errado.
+    """
     from pat.corpus.extract import sniff_media_type
 
     return SourceDocument(
@@ -191,26 +231,21 @@ def _to_source_document(
         entity_id=entity_id,
         kind=entry.kind,
         title=entry.title,
-        language=_LANGUAGE,
+        language=entry.language,
         source_tier=source_tier,
-        # `Data_Entrega` e o que a companhia declarou ao regulador como data de
-        # entrega. E metadado de protocolo, e nao leitura do documento - por
-        # isso a base e FILING_METADATA, e ela viaja ate a citacao.
-        published_at=entry.delivered_at,
-        published_at_basis=DateBasis.FILING_METADATA,
+        published_at=entry.published_at,
+        published_at_basis=entry.published_at_basis,
         reference_date=entry.reference_date,
-        reference_date_basis=(
-            DateBasis.FILING_METADATA if entry.reference_date is not None else None
-        ),
+        reference_date_basis=entry.reference_date_basis,
         media_type=sniff_media_type(payload) or "application/octet-stream",
         byte_size=len(payload),
-        provider_id="cvm",
-        dataset_id=DOCUMENT_DATASET,
-        resource_key=entry.protocolo,
-        source_url=entry.url,
+        provider_id=entry.provider_id,
+        dataset_id=entry.dataset_id,
+        resource_key=entry.resource_key,
+        source_url=entry.source_url,
         retrieval_id=retrieval_id,
-        origin_category=entry.categoria,
-        origin_version=entry.versao or None,
+        origin_category=entry.origin_category,
+        origin_version=entry.origin_version,
         first_seen_at=first_seen_at,
         first_seen_run_id=first_seen_run_id,
     )
@@ -253,22 +288,33 @@ def verify_unit(
     import hashlib
 
     matches_hash = hashlib.sha256(payload).hexdigest() == document.document_id
-    if unit.extraction_version != EXTRACTION_VERSION:
-        # Extrator diferente do atual: o hash do blob ainda e conferivel, mas
-        # o texto nao e comparavel. Dizer "nao bate" seria mentira; dizer
-        # "bate" seria pior.
+
+    # O extrator a re-rodar sai da unidade, e nao do tipo do documento: uma
+    # unidade guarda a versao que a produziu, e e ela que define como o texto
+    # se reconstroi. Escolher pelo media type do documento daria o extrator
+    # certo hoje e o errado no dia em que um segundo extrator ler o mesmo
+    # formato.
+    if unit.extraction_version == EXTRACTION_VERSION:
+        paginas = extract_pdf_page_texts(payload)
+        indice = (unit.locator.page or 1) - 1
+        if indice >= len(paginas):
+            return UnitVerification(
+                unit.unit_id, document.document_id, True, matches_hash, False
+            )
+        fonte = paginas[indice]
+    elif unit.extraction_version == HTML_EXTRACTION_VERSION:
+        fonte = extract_html_text(payload)
+    else:
+        # Extrator diferente de qualquer um dos atuais: o hash do blob ainda e
+        # conferivel, mas o texto nao e comparavel. Dizer "nao bate" seria
+        # mentira; dizer "bate" seria pior.
         return UnitVerification(
             unit.unit_id, document.document_id, True, matches_hash, False
         )
 
-    pages = extract_pdf_page_texts(payload)
-    page_index = (unit.locator.page or 1) - 1
-    if page_index >= len(pages):
-        return UnitVerification(unit.unit_id, document.document_id, True, matches_hash, False)
-
-    slice_ = pages[page_index][unit.locator.char_start : unit.locator.char_end]
+    fatia = fonte[unit.locator.char_start : unit.locator.char_end]
     return UnitVerification(
-        unit.unit_id, document.document_id, True, matches_hash, slice_ == unit.text
+        unit.unit_id, document.document_id, True, matches_hash, fatia == unit.text
     )
 
 
@@ -276,3 +322,50 @@ def verify_unit(
 # catalogo tambem e versionada, e por que ela e separada da versao do extrator
 # de PDF: sao dois artefatos com ciclos de vida diferentes.
 CATALOG_PARSER_VERSION = EXTRACTOR_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Descoberta de arquivamentos americanos
+# ---------------------------------------------------------------------------
+
+SUBMISSIONS_DATASET = "sec.submissions"
+
+
+def sec_candidates(
+    conn: duckdb.DuckDBPyConnection,
+    bronze: BronzeStore,
+    *,
+    cik: str,
+    forms: tuple[str, ...] = (),
+    since=None,
+):
+    """Le do bronze o indice de arquivamentos e devolve candidatos. Sem rede.
+
+    O analogo exato de `catalog_entries` do lado brasileiro, ate na escolha da
+    versao: usa a MAIS RECENTE do recurso, porque submissions e um indice
+    corrente e nao um fato bitemporal. Os documentos apontados e que carregam
+    data de entrega, e sao eles que sustentam o `AS OF`.
+    """
+    from pat.parse.sec_submissions import parse_submissions
+
+    chave = str(cik).zfill(10)
+    rows = conn.execute(
+        """
+        SELECT content_sha256, MAX(retrieved_at) AS latest
+        FROM retrieval
+        WHERE dataset_id = ? AND resource_key = ?
+        GROUP BY content_sha256
+        ORDER BY latest DESC
+        LIMIT 1
+        """,
+        [SUBMISSIONS_DATASET, chave],
+    ).fetchall()
+    if not rows:
+        raise LookupError(
+            f"indice {SUBMISSIONS_DATASET} de {chave} nao esta no bronze. "
+            f"Rode `pat fetch {SUBMISSIONS_DATASET} --cik {int(chave)}` primeiro."
+        )
+    return rows[0][0], parse_submissions(
+        bronze.read(rows[0][0]), forms=forms, since=since
+    )
+

@@ -1284,16 +1284,24 @@ def cmd_docs(args) -> int:
 def _docs_sync(args) -> int:
     from pat.corpus import catalog_entries, sync_documents
 
-    if not args.year:
-        print("--sync exige --year (o catalogo IPE e anual)", file=sys.stderr)
-        return 1
-
     bronze, catalog, conn = _open(args)
     resolved = _resolve_entity_arg(conn, args)
     if resolved is None:
         conn.close()
         return 1
     entity_id, denom = resolved
+
+    # O despacho e pelo identificador que o usuario digitou, e nao por uma
+    # deteccao de jurisdicao: os dois indices - IPE e submissions - sao
+    # indexados por chaves diferentes, e e essa chave que decide o caminho.
+    if getattr(args, "cik", None):
+        return _docs_sync_sec(args, bronze=bronze, catalog=catalog, conn=conn,
+                              entity_id=entity_id, denom=denom)
+
+    if not args.year:
+        print("--sync exige --year (o catalogo IPE e anual)", file=sys.stderr)
+        conn.close()
+        return 1
 
     if args.cod_cvm is None:
         # RECUSA NOMEADA, e nao um crash tres linhas adiante.
@@ -1336,6 +1344,83 @@ def _docs_sync(args) -> int:
             conn,
             entity_id=entity_id,
             entries=entries,
+            registry=registry,
+            bronze=bronze,
+            catalog=catalog,
+            run=run,
+            limit=args.limit,
+        )
+    except SourceError as exc:
+        print(f"falha na origem: {exc}", file=sys.stderr)
+        catalog.finish_run(run.run_id, RunStatus.FAILED, datetime.now(UTC))
+        conn.close()
+        return 1
+    finally:
+        registry.close()
+
+    catalog.finish_run(run.run_id, RunStatus.SUCCEEDED, datetime.now(UTC))
+    print(
+        f"buscados {outcome.documents_fetched} | novos {outcome.documents_new} | "
+        f"ja tinha {outcome.skipped_existing}"
+    )
+    print(f"unidades {outcome.units_written} | indexadas {outcome.units_indexed}")
+    if outcome.failures:
+        print(f"\n{outcome.failed} documento(s) NAO extraidos - registrados, nao silenciados:")
+        for document_id, reason, title in outcome.failures:
+            print(f"  {document_id[:12]}  {reason}  {title[:56]}")
+    conn.close()
+    return 0
+
+
+def _docs_sync_sec(args, *, bronze, catalog, conn, entity_id: str, denom: str) -> int:
+    """O `--sync` americano. Mesma forma do brasileiro, outro indice.
+
+    A simetria e o ponto: os dois leem um indice do bronze, produzem
+    `DocumentCandidate` e chamam o MESMO `sync_documents`. Nao ha um segundo
+    pipeline de corpus - haveria se o candidato nao fosse regime-neutro.
+    """
+    from pat.corpus import sec_candidates, sync_documents
+
+    formas = tuple(args.form) if getattr(args, "form", None) else ("10-K", "10-Q")
+    try:
+        _, indice = sec_candidates(
+            conn, bronze, cik=args.cik, forms=formas, since=args.since
+        )
+    except LookupError as exc:
+        print(str(exc), file=sys.stderr)
+        conn.close()
+        return 1
+    except ValueError as exc:
+        print(f"layout inesperado na origem: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    print(
+        f"{denom}: {len(indice.candidates)} arquivamento(s) de "
+        f"{', '.join(formas)} no indice recente"
+    )
+    if indice.older_files:
+        # A SEC pagina o historico. Dizer quantos arquivos ficaram de fora e a
+        # diferenca entre "a companhia nao arquivou" e "o indice recente nao
+        # alcanca" - as duas chegam como ausencia e pedem acoes opostas.
+        print(
+            f"  ({len(indice.older_files)} arquivo(s) de historico anterior NAO "
+            "lidos: o indice recente da SEC nao os cobre)"
+        )
+    if indice.skipped_no_document:
+        print(f"  ({indice.skipped_no_document} sem documento principal declarado)")
+    if not indice.candidates:
+        conn.close()
+        return 0
+
+    run = new_run(f"docs --sync --cik {args.cik} formas={formas}")
+    catalog.start_run(run)
+    registry = Registry()
+    try:
+        outcome = sync_documents(
+            conn,
+            entity_id=entity_id,
+            entries=list(indice.candidates),
             registry=registry,
             bronze=bronze,
             catalog=catalog,
@@ -1495,10 +1580,10 @@ def cmd_provenance_unit(args) -> int:
     print("\nreconferencia contra os bytes:")
     print(f"  blob presente       {'sim' if verification.blob_found else 'NAO'}")
     print(f"  hash confere        {'sim' if verification.blob_sha256_matches else 'NAO'}")
-    if unit.extraction_version != _current_extraction_version():
+    if unit.extraction_version not in _current_extraction_versions():
         print(
             f"  texto confere       n/a (unidade extraida por {unit.extraction_version}, "
-            f"o extrator atual e {_current_extraction_version()})"
+            f"e os extratores atuais sao {', '.join(_current_extraction_versions())})"
         )
         print("  Nao e divergencia: e passagem do tempo. A unidade antiga continua valida.")
     else:
@@ -1512,10 +1597,18 @@ def cmd_provenance_unit(args) -> int:
     return 0 if verification.blob_found and verification.blob_sha256_matches else 1
 
 
-def _current_extraction_version() -> str:
-    from pat.corpus.extract import EXTRACTION_VERSION
+def _current_extraction_versions() -> tuple[str, ...]:
+    """As versoes de extrator que sabem reconstruir texto HOJE.
 
-    return EXTRACTION_VERSION
+    Plural desde que o HTML ganhou extrator proprio: uma unidade extraida por
+    um deles e reconferivel, e uma extraida por uma versao antiga de qualquer
+    um nao e. Comparar contra um unico extrator diria "n/a" para toda unidade
+    de HTML mesmo com o extrator de HTML instalado - o que se leria como
+    "nao da para conferir" quando o certo e "confere".
+    """
+    from pat.corpus.extract import EXTRACTION_VERSION, HTML_EXTRACTION_VERSION
+
+    return (EXTRACTION_VERSION, HTML_EXTRACTION_VERSION)
 
 
 # ---------------------------------------------------------------------------
@@ -2645,7 +2738,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_docs = sub.add_parser("docs", help="documentos qualitativos de uma empresa")
     p_docs.add_argument("--cod-cvm", type=int,
                         help="companhia brasileira (CVM); exigido por --sync")
-    p_docs.add_argument("--cik", help="companhia americana (SEC); leitura apenas")
+    p_docs.add_argument("--cik", help="companhia americana (SEC)")
+    p_docs.add_argument(
+        "--form",
+        action="append",
+        help="forma da SEC a sincronizar; repetivel. Default: 10-K e 10-Q. "
+        "Uma companhia grande arquiva milhares de Form 4 por ano, e baixar "
+        "todos para achar um 10-K gastaria a paciencia da origem sem ganhar "
+        "informacao",
+    )
+    p_docs.add_argument(
+        "--since",
+        type=date.fromisoformat,
+        help="so arquivamentos entregues a partir desta data (AAAA-MM-DD)",
+    )
     p_docs.add_argument(
         "--sync",
         action="store_true",

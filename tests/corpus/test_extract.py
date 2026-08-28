@@ -139,10 +139,18 @@ def test_pdf_sem_camada_de_texto_falha_com_nome():
     assert "OCR" in (outcome.failure.remedy or "")
 
 
-def test_conteudo_que_nao_e_pdf_falha_com_nome():
-    outcome = extract(DOC, b"<html><body>nao sou pdf</body></html>")
+def test_tipo_sem_extrator_falha_com_nome():
+    """O invariante e "tipo sem extrator recusa com motivo", e nao "so PDF".
+
+    Ate a N2 o HTML caia aqui; agora ele tem extrator proprio, e o teste passa
+    a usar um tipo que de fato nao tem - um ZIP. O que nao pode mudar e a
+    recusa NOMEADA: um tipo desconhecido que produzisse zero unidades em
+    silencio se leria como "o documento nao diz nada".
+    """
+    outcome = extract(DOC, b"PK\x03\x04conteudo compactado")
     assert outcome.failure is not None
     assert outcome.failure.reason is ExtractionFailureReason.UNSUPPORTED_MEDIA_TYPE
+    assert "application/zip" in outcome.failure.message
 
 
 def test_pdf_corrompido_vira_erro_nomeado_e_nao_excecao():

@@ -208,69 +208,49 @@ class BrazilDocumentProvider:
 
 
 class USDocumentProvider:
-    """Adapter americano. Parcial, e diz exatamente onde para.
+    """Adapter americano. Completo desde a N2.
 
-    Nao ha `discover` porque descobrir arquivamento exige interpretar o indice
-    da fonte, e interpretacao e silver - o provider de fonte monta URL a partir
-    de identificadores, nao os descobre. Nao ha `extract` porque o extrator le
-    PDF e os arquivamentos vem em HTML.
+    Ate ali este adapter era parcial e dizia exatamente onde parava: nao havia
+    descoberta - transformar o indice de arquivamentos em lista de documentos e
+    trabalho de parsing, que pertence a silver - nem extracao, porque o
+    extrator lia PDF e os arquivamentos vem em HTML.
 
-    A classe existe assim mesmo, e nao como um `None` em `PROVIDERS`, por dois
-    motivos. O primeiro e que `fetch` de fato funciona, e alguem com o
-    identificador de um arquivamento na mao pode trazer os bytes. O segundo e
-    que um `None` obrigaria cada chamador a inventar a propria mensagem de
-    lacuna, e cada um inventaria uma diferente.
+    As duas lacunas foram fechadas: `parse/sec_submissions.py` le o indice com
+    tabela declarada de forma -> `DocumentKind`, e `corpus/extract_html.py` le
+    XHTML com `extraction_version` propria. O adapter passa a delegar ao MESMO
+    `sync_documents` do lado brasileiro.
+
+    O que ele NAO faz, e continua dizendo: o indice recente da SEC nao cobre o
+    historico inteiro, e os arquivos anteriores nao sao lidos. Uma companhia
+    antiga tem anos fora do alcance, e isso aparece na saida do `--sync` em vez
+    de virar "nao ha 10-K de 2015".
     """
 
     provider_id = "us-filings"
     jurisdiction = "US"
+
+    scheme = "cik"
 
     @property
     def profile(self) -> ProviderProfile:
         return ProviderProfile(
             provider_id=self.provider_id,
             jurisdiction=self.jurisdiction,
-            capabilities=(ProviderCapability.FETCH,),
-            missing=(self._no_discovery(), self._no_extraction()),
-            kinds_supported=(),
-        )
-
-    def _no_discovery(self) -> ProviderUnavailable:
-        return ProviderUnavailable(
-            provider_id=self.provider_id,
-            jurisdiction=self.jurisdiction,
-            capability=ProviderCapability.DISCOVER,
-            reason=ProviderUnavailableReason.NOT_IMPLEMENTED,
-            message=(
-                "nao existe descoberta de arquivamentos para esta jurisdicao: o "
-                "provider de fonte monta a URL de um documento a partir de "
-                "identificadores que alguem ja tem, e transformar o indice de "
-                "arquivamentos em lista de documentos e trabalho de parsing, que "
-                "pertence a silver"
+            capabilities=(
+                ProviderCapability.DISCOVER,
+                ProviderCapability.FETCH,
+                ProviderCapability.EXTRACT,
             ),
-            remedy=(
-                "Escreva o parser do indice de arquivamentos em `pat/parse/`, com a "
-                "tabela declarada de tipo de formulario -> DocumentKind, como em "
-                "`parse/cvm_ipe.py`. Ate la, informe os documentos a mao."
-            ),
-        )
-
-    def _no_extraction(self) -> ProviderUnavailable:
-        return ProviderUnavailable(
-            provider_id=self.provider_id,
-            jurisdiction=self.jurisdiction,
-            capability=ProviderCapability.EXTRACT,
-            reason=ProviderUnavailableReason.UNSUPPORTED_MEDIA,
-            message=(
-                "o extrator de unidades le PDF, e os arquivamentos desta jurisdicao "
-                "sao HTML. Os bytes entram no bronze e ficam com procedencia; o que "
-                "nao acontece e virarem unidade citavel"
-            ),
-            remedy=(
-                "Escreva um extrator de HTML em `pat/corpus/`, com "
-                "`extraction_version` propria, para que as unidades novas nasçam ao "
-                "lado das antigas em vez de redefinir o que uma citacao queria dizer. "
-                "Nao use OCR nem um segundo extrator improvisado."
+            missing=(),
+            # Declarado aqui, e nao importado do parser: a regra de camada
+            # proibe `pat.parse` no Opportunity, e a lista existe para o
+            # agente saber o que procurar - nao para reproduzir a tabela.
+            kinds_supported=(
+                DocumentKind.FILING,
+                DocumentKind.MATERIAL_FACT,
+                DocumentKind.GOVERNANCE,
+                DocumentKind.SHAREHOLDER_NOTICE,
+                DocumentKind.PERFORMANCE_REPORT,
             ),
         )
 
@@ -281,14 +261,77 @@ class USDocumentProvider:
         company: CompanyProfile,
         published_from: date,
         published_to: date,
+        bronze=None,
+        forms: tuple[str, ...] = ("10-K", "10-Q"),
         **_: object,
-    ) -> ProviderUnavailable:
-        """Sempre recusa, com motivo e remedio. Nunca uma lista vazia.
+    ) -> tuple[DiscoveredDocument, ...] | ProviderUnavailable:
+        """Le o indice de arquivamentos do bronze e devolve o que ha na janela.
 
-        Lista vazia diria ao agente que a empresa nao publicou nada na janela -
-        uma afirmacao sobre o mundo. O fato e sobre o sistema.
+        Ate a N2 este metodo SEMPRE recusava, e a recusa estava certa enquanto
+        nada consumia o indice. Agora ela seria a mentira oposta - dizer que o
+        sistema nao sabe fazer o que passou a fazer.
+
+        O que continua recusando com motivo: indice ausente do bronze, e
+        companhia sem identificador da jurisdicao. Lista vazia so sai quando o
+        indice foi lido e de fato nao ha arquivamento na janela.
         """
-        return self._no_discovery()
+        from pat.corpus import sec_candidates
+
+        local = company.local_id(self.scheme)
+        if local is None:
+            return ProviderUnavailable(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                capability=ProviderCapability.DISCOVER,
+                reason=ProviderUnavailableReason.NOT_IMPLEMENTED,
+                message=(
+                    f"{company.entity_id} nao tem identificador {self.scheme!r} no "
+                    "catalogo, e o indice deste regime e chaveado por ele"
+                ),
+                remedy=f"Grave a identidade {self.scheme!r} da companhia com `pat build`.",
+            )
+        if bronze is None:
+            return ProviderUnavailable(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                capability=ProviderCapability.DISCOVER,
+                reason=ProviderUnavailableReason.CATALOG_MISSING,
+                message="a descoberta le o indice do bronze, e nenhum bronze foi passado",
+                remedy="Passe `bronze=BronzeStore(paths.bronze)` na chamada.",
+            )
+
+        try:
+            _, indice = sec_candidates(
+                conn, bronze, cik=str(local), forms=forms, since=published_from
+            )
+        except LookupError as erro:
+            return ProviderUnavailable(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                capability=ProviderCapability.DISCOVER,
+                reason=ProviderUnavailableReason.CATALOG_MISSING,
+                message=str(erro),
+                remedy=f"Rode `pat fetch sec.submissions --cik {int(local)}` e tente de novo.",
+            )
+
+        encontrados = [
+            DiscoveredDocument(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                external_id=candidato.resource_key,
+                title=candidato.title,
+                kind=candidato.kind,
+                published_at=candidato.published_at,
+                published_at_basis=candidato.published_at_basis,
+                source_tier=SourceTier.PRIMARY_OFFICIAL,
+                source_url=candidato.source_url,
+                reference_date=candidato.reference_date,
+                origin_category=candidato.origin_category,
+            )
+            for candidato in indice.candidates
+            if published_from <= candidato.published_at <= published_to
+        ]
+        return tuple(sorted(encontrados, key=lambda d: (d.published_at, d.external_id)))
 
     def fetch(
         self,
@@ -297,15 +340,58 @@ class USDocumentProvider:
         company: CompanyProfile,
         documents: tuple[DiscoveredDocument, ...],
         limit: int | None = None,
-        **_: object,
-    ) -> ProviderUnavailable:
-        """Os bytes sao buscaveis; a unidade citavel nao sai deles.
+        bronze=None,
+        catalog=None,
+        registry=None,
+        run=None,
+        as_of: date | None = None,
+    ) -> tuple[StoredDocument, ...] | ProviderUnavailable:
+        """Traz, extrai e indexa. Delega ao MESMO `sync_documents` do Brasil.
 
-        Recusa em EXTRACT, e nao em FETCH, porque e onde a lacuna esta de
-        verdade - e a diferenca diz a quem for terminar o trabalho por onde
-        comecar.
+        Se este metodo tivesse um pipeline proprio, existiriam dois caminhos de
+        corpus, e o terceiro regime pediria um terceiro.
         """
-        return self._no_extraction()
+        from pat.corpus import sec_candidates, sync_documents
+
+        if any(x is None for x in (bronze, catalog, registry, run)):
+            return ProviderUnavailable(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                capability=ProviderCapability.FETCH,
+                reason=ProviderUnavailableReason.NEEDS_NETWORK,
+                message="a busca exige bronze, catalogo, registro de fontes e uma corrida",
+                remedy="Chame por `pat docs --sync`, que monta os quatro.",
+            )
+
+        local = company.local_id(self.scheme)
+        procurados = {d.external_id for d in documents}
+        try:
+            _, indice = sec_candidates(conn, bronze, cik=str(local))
+        except LookupError as erro:
+            return ProviderUnavailable(
+                provider_id=self.provider_id,
+                jurisdiction=self.jurisdiction,
+                capability=ProviderCapability.FETCH,
+                reason=ProviderUnavailableReason.CATALOG_MISSING,
+                message=str(erro),
+                remedy=f"Rode `pat fetch sec.submissions --cik {int(local)}`.",
+            )
+
+        # Reusa o candidato original em vez de reconstrui-lo a partir do
+        # `DiscoveredDocument`: a URL, a forma e a data sao da fonte, e uma
+        # segunda copia pode divergir da primeira.
+        entradas = [c for c in indice.candidates if c.resource_key in procurados]
+        sync_documents(
+            conn,
+            entity_id=company.entity_id,
+            entries=entradas,
+            registry=registry,
+            bronze=bronze,
+            catalog=catalog,
+            run=run,
+            limit=limit,
+        )
+        return stored_documents(conn, company.entity_id, as_of=as_of)
 
 
 def _catalog_entries_for(conn, bronze, *, documents, cod_cvm):

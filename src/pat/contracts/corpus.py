@@ -541,3 +541,62 @@ class EvidenceUnavailable(Frozen):
     Numero util e honesto: distingue "a empresa nao falou disso" de "a empresa
     falou disso depois da data que voce pediu", que e a diferenca entre nao ter
     tese e estar olhando o passado corretamente."""
+
+
+class DocumentCandidate(Frozen):
+    """Um documento que a origem DIZ existir, antes de os bytes chegarem.
+
+    Regime-neutro de proposito. O catalogo IPE da CVM e o historico de
+    arquivamentos da SEC descrevem a mesma coisa - "existe um documento, aqui
+    esta como busca-lo, e isto e o que sabemos sobre ele" - com vocabularios
+    diferentes. Sem um tipo comum, `sync_documents` teria um ramo por regime, e
+    o terceiro regime pediria um terceiro ramo.
+
+    NAO tem `document_id`. O identificador de um documento e o sha256 do
+    conteudo, e antes do fetch nao existe conteudo: um candidato e uma promessa
+    de documento, e a promessa pode nao se cumprir (URL morta, 404, bytes
+    vazios). Manter os dois tipos separados e o que impede o catalogo de virar
+    um documento que ninguem leu.
+
+    `params` sao os argumentos do `resolve()` do provider, e nao uma URL: quem
+    monta URL e o provider, e um candidato que carregasse URL pronta faria a
+    camada de catalogo conhecer a estrutura de endereco da origem.
+    """
+
+    dataset_id: str = Field(min_length=1, description="Dataset que busca os bytes")
+    params: tuple[tuple[str, str], ...] = Field(
+        description="Argumentos de `provider.resolve()`, como pares ordenados"
+    )
+    provider_id: str = Field(min_length=1)
+
+    kind: DocumentKind
+    title: str = Field(min_length=1)
+    language: str = Field(min_length=2)
+
+    published_at: date
+    published_at_basis: DateBasis
+    reference_date: date | None = None
+    reference_date_basis: DateBasis | None = None
+
+    resource_key: str = Field(min_length=1)
+    source_url: str = Field(min_length=1, description="So para procedencia; nao e usada para buscar")
+    origin_category: str = Field(
+        min_length=1,
+        description="O rotulo do REGULADOR: 'Fato Relevante', '10-K'. Nunca traduzido",
+    )
+    origin_version: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "DocumentCandidate":
+        if self.reference_date is not None and self.reference_date_basis is None:
+            raise ValueError(
+                f"candidato {self.resource_key!r} tem `reference_date` sem base. "
+                "Data adivinhada que se apresenta como lida e o analogo textual "
+                "do numero aproximado que se apresenta como exato."
+            )
+        return self
+
+    @property
+    def fetch_params(self) -> dict[str, str]:
+        return dict(self.params)
+

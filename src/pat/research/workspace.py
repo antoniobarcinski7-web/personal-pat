@@ -268,7 +268,18 @@ def _qualitative(
             SELECT f.document_id, f.reason
             FROM extraction_failure f
             JOIN source_document d ON d.document_id = f.document_id
-            WHERE d.entity_id = ? ORDER BY f.failed_at
+            WHERE d.entity_id = ?
+              -- "Nao extraido" quer dizer "sem unidade HOJE", e nao "falhou
+              -- uma vez". Sem este filtro, um documento reprocessado com
+              -- sucesso continuava contado como falha, e o workspace dizia ter
+              -- 5.432 unidades e tres documentos nao extraidos ao mesmo tempo.
+              -- O registro da falha continua na tabela: e historia de uma
+              -- tentativa, e apaga-la perderia a informacao de que aquele
+              -- documento ja foi dificil.
+              AND NOT EXISTS (
+                  SELECT 1 FROM document_unit u WHERE u.document_id = f.document_id
+              )
+            ORDER BY f.failed_at
             """,
             [entity_id],
         ).fetchall()
@@ -297,15 +308,12 @@ def _qualitative(
                 remedy=(
                     "pat docs --cod-cvm ... --sync --year ..."
                     if jurisdiction == "BR"
-                    # Recusa HONESTA para a jurisdicao americana: nao ha
-                    # comando que resolva isso hoje. Sugerir `pat docs --sync`
-                    # aqui mandaria o leitor rodar algo que falha, e o remedio
-                    # de uma linha viraria uma pista falsa.
-                    else (
-                        "nao ha ingestao de corpus para esta jurisdicao: "
-                        "`sec.filing_doc` existe no provider mas nao tem "
-                        "consumidor, e o extrator so le PDF (filing e HTML)"
-                    )
+                    # O remedio americano exige DOIS passos, e listar so o
+                    # segundo mandaria o leitor rodar um comando que recusa por
+                    # falta do indice. Ate a N2 nao havia remedio nenhum, e a
+                    # mensagem dizia isso; mante-la agora seria a mentira
+                    # oposta.
+                    else "pat fetch sec.submissions --cik ... && pat docs --cik ... --sync"
                 ),
             )
         )

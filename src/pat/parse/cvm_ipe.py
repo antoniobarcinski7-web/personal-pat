@@ -139,6 +139,39 @@ class IpeCatalogEntry(Frozen):
     versao: str = ""
     url: str = Field(min_length=1)
 
+    def as_candidate(self):
+        """A entrada do catalogo IPE, no tipo regime-neutro do corpus.
+
+        Existe para que `sync_documents` nao precise conhecer a CVM. O que ela
+        traduz e vocabulario - `Categoria` vira `origin_category`,
+        `Data_Entrega` vira `published_at` - e nao semantica: `kind` ja saiu da
+        tabela declarada acima, e `title` continua sendo concatenacao do que a
+        origem publicou.
+        """
+        from pat.contracts.corpus import DateBasis, DocumentCandidate
+
+        return DocumentCandidate(
+            dataset_id="cvm.ipe_doc",
+            params=(("url", self.url), ("protocolo", self.protocolo)),
+            provider_id="cvm",
+            kind=self.kind,
+            title=self.title,
+            language="pt-BR",
+            # `Data_Entrega` e o que a companhia declarou ao regulador. E
+            # metadado de protocolo, e nao leitura do documento - por isso a
+            # base e FILING_METADATA, e ela viaja ate a citacao.
+            published_at=self.delivered_at,
+            published_at_basis=DateBasis.FILING_METADATA,
+            reference_date=self.reference_date,
+            reference_date_basis=(
+                DateBasis.FILING_METADATA if self.reference_date is not None else None
+            ),
+            resource_key=self.protocolo,
+            source_url=self.url,
+            origin_category=self.categoria,
+            origin_version=self.versao or None,
+        )
+
     @property
     def title(self) -> str:
         """Titulo utilizavel, sem inventar texto.

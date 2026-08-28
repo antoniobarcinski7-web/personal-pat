@@ -301,14 +301,35 @@ def documents_for_entity(
 
 
 def extraction_failures(
-    conn: duckdb.DuckDBPyConnection, entity_id: str | None = None
+    conn: duckdb.DuckDBPyConnection,
+    entity_id: str | None = None,
+    *,
+    include_resolved: bool = False,
 ) -> list[tuple[str, str, str, str]]:
-    """(document_id, reason, message, title) das falhas registradas."""
+    """(document_id, reason, message, title) das falhas AINDA em aberto.
+
+    "Nao extraido" quer dizer "sem unidade hoje", e nao "falhou uma vez". A
+    distincao passou a importar quando o extrator de HTML entrou: os tres 10-K
+    da Netflix tinham falhado por `unsupported_media_type`, foram reprocessados
+    com sucesso, e continuavam listados como nao extraidos - um workspace que
+    dizia ter 5.432 unidades e tres documentos nao extraidos ao mesmo tempo.
+
+    O REGISTRO da falha nao e apagado: ele e historia de uma tentativa, e
+    apaga-lo perderia a informacao de que aquele documento ja foi dificil.
+    `include_resolved=True` traz tudo, que e o que uma auditoria do extrator
+    quer ver.
+    """
+    resolvidas = (
+        ""
+        if include_resolved
+        else " AND NOT EXISTS (SELECT 1 FROM document_unit u WHERE u.document_id = f.document_id)"
+    )
     if entity_id is None:
         rows = conn.execute(
             "SELECT f.document_id, f.reason, f.message, COALESCE(d.title, '(sem documento)') "
             "FROM extraction_failure f "
             "LEFT JOIN source_document d ON d.document_id = f.document_id "
+            f"WHERE 1 = 1{resolvidas} "
             "ORDER BY f.failed_at"
         ).fetchall()
     else:
@@ -316,7 +337,7 @@ def extraction_failures(
             "SELECT f.document_id, f.reason, f.message, d.title "
             "FROM extraction_failure f "
             "JOIN source_document d ON d.document_id = f.document_id "
-            "WHERE d.entity_id = ? ORDER BY f.failed_at",
+            f"WHERE d.entity_id = ?{resolvidas} ORDER BY f.failed_at",
             [entity_id],
         ).fetchall()
     return [(r[0], r[1], r[2], r[3]) for r in rows]
