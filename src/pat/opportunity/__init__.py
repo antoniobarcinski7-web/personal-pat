@@ -23,7 +23,19 @@ Montagem tipica:
 from __future__ import annotations
 
 from pat.opportunity.company import UnknownEntity, profile_for
+from pat.opportunity.documents import (
+    DocumentInventory,
+    DocumentProvider,
+    StoredDocument,
+    inventory,
+    stored_documents,
+)
 from pat.opportunity.journal import Journal, JournalCorrupt
+from pat.opportunity.providers import (
+    BrazilDocumentProvider,
+    USDocumentProvider,
+    provider_for,
+)
 from pat.opportunity.state import FoldError, OpportunityState, fold
 from pat.opportunity.store import (
     Workspace,
@@ -38,20 +50,28 @@ from pat.opportunity.tools import AccountLine, PatTools, ToolContext
 
 __all__ = [
     "AccountLine",
+    "BrazilDocumentProvider",
+    "DocumentInventory",
+    "DocumentProvider",
     "FoldError",
     "Journal",
     "JournalCorrupt",
     "OpportunityState",
     "PatTools",
+    "StoredDocument",
     "ToolContext",
+    "USDocumentProvider",
     "UnknownEntity",
     "Workspace",
     "WorkspaceArchivedError",
     "WorkspaceNotFound",
     "create_workspace",
     "fold",
+    "inventory",
     "list_workspaces",
     "new_workspace_id",
     "open_workspace",
     "profile_for",
+    "provider_for",
+    "stored_documents",
 ]
