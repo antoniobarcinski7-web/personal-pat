@@ -38,6 +38,8 @@ from pat.contracts.opportunity import (
     AgendaObjectiveSet,
     AlternativeConsidered,
     AsOfAdvanced,
+    AssumptionChanged,
+    AssumptionSet,
     Blocker,
     BlockerCleared,
     BlockerRecorded,
@@ -78,6 +80,10 @@ from pat.contracts.opportunity import (
     TaskStatus,
     TaskStatusChanged,
     TitleSet,
+    ValuationDeclared,
+    ValuationInterpretation,
+    ValuationInterpreted,
+    ValuationModel,
     WorkspaceArchived,
     WorkspaceCreated,
     WorkspaceReopened,
@@ -109,7 +115,12 @@ class OpportunityState(Frozen):
     hypotheses: tuple[Hypothesis, ...] = ()
     claims: tuple[Claim, ...] = ()
     conclusions: tuple[Conclusion, ...] = ()
+    valuations: tuple[ValuationModel, ...] = ()
+    valuation_notes: tuple[ValuationInterpretation, ...] = ()
     notes: tuple[Note, ...] = ()
+
+    def valuation(self, slug: str) -> ValuationModel | None:
+        return next((v for v in self.valuations if v.slug == slug), None)
 
     def hypothesis(self, slug: str) -> Hypothesis | None:
         return next((h for h in self.hypotheses if h.slug == slug), None)
@@ -246,6 +257,8 @@ class _Builder:
     # anterior no estado, e o diario guarda as duas. Acumular varias faria a
     # tese citar a que o leitor achasse primeiro.
     conclusions: dict[str, Conclusion] = field(default_factory=dict)
+    valuations: dict[str, ValuationModel] = field(default_factory=dict)
+    valuation_notes: list[ValuationInterpretation] = field(default_factory=list)
 
     def hypothesis(self, slug: str, ev: JournalEvent) -> _HypothesisBuilder:
         hipotese = self.hypotheses.get(slug)
@@ -291,6 +304,8 @@ class _Builder:
             hypotheses=tuple(h.freeze() for h in self.hypotheses.values()),
             claims=tuple(self.claims.values()),
             conclusions=tuple(self.conclusions.values()),
+            valuations=tuple(self.valuations.values()),
+            valuation_notes=tuple(self.valuation_notes),
             notes=tuple(self.notes),
         )
 
@@ -590,6 +605,52 @@ def _on_conclusion(b: _Builder, ev: JournalEvent, body: ConclusionDrawn) -> None
     )
 
 
+# -- tratadores: valuation (O8) ---------------------------------------------
+
+
+def _on_valuation(b: _Builder, ev: JournalEvent, body: ValuationDeclared) -> None:
+    if body.model.slug in b.valuations:
+        raise FoldError(
+            f"workspace {b.workspace_id}: valuation {body.model.slug!r} declarada duas "
+            f"vezes (seq {ev.seq}). Trocar premissa e `assumption_changed`; redeclarar "
+            "o modelo inteiro apagaria o historico das trocas."
+        )
+    b.valuations[body.model.slug] = body.model
+
+
+def _on_assumption_changed(b: _Builder, ev: JournalEvent, body: AssumptionChanged) -> None:
+    modelo = b.valuations.get(body.model)
+    if modelo is None:
+        raise FoldError(
+            f"workspace {b.workspace_id}: premissa trocada (seq {ev.seq}) num modelo "
+            f"{body.model!r} que nao foi declarado."
+        )
+    # O valor antigo continua no diario. Trocar premissa e onde uma tese se
+    # auto-ajusta ate dar o numero que o autor queria; o historico nao proibe
+    # isso - torna visivel.
+    outras = tuple(
+        a for a in modelo.assumptions.assumptions if a.slug != body.assumption.slug
+    )
+    b.valuations[body.model] = modelo.model_copy(
+        update={"assumptions": AssumptionSet(assumptions=(*outras, body.assumption))}
+    )
+
+
+def _on_valuation_interpreted(
+    b: _Builder, ev: JournalEvent, body: ValuationInterpreted
+) -> None:
+    if body.model not in b.valuations:
+        raise FoldError(
+            f"workspace {b.workspace_id}: interpretacao (seq {ev.seq}) sobre a "
+            f"valuation {body.model!r}, que nao foi declarada."
+        )
+    b.valuation_notes.append(
+        ValuationInterpretation(
+            model_slug=body.model, text=body.text, author=ev.actor, at=ev.at
+        )
+    )
+
+
 _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     # O0
     WorkspaceCreated: _on_created,
@@ -621,6 +682,10 @@ _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     # O7
     FalsificationAttempted: _on_falsification,
     AlternativeConsidered: _on_alternative,
+    # O8
+    ValuationDeclared: _on_valuation,
+    AssumptionChanged: _on_assumption_changed,
+    ValuationInterpreted: _on_valuation_interpreted,
 }
 
 

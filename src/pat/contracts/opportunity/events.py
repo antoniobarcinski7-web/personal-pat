@@ -46,6 +46,11 @@ from pat.contracts.opportunity.critic import (
     AlternativeConsidered,
     FalsificationAttempted,
 )
+from pat.contracts.opportunity.valuation import (
+    AssumptionChanged,
+    ValuationDeclared,
+    ValuationInterpreted,
+)
 from pat.contracts.opportunity.hypothesis import (
     ClaimAsserted,
     ConclusionDrawn,
@@ -93,6 +98,10 @@ EventBody = (
     # O7
     | FalsificationAttempted
     | AlternativeConsidered
+    # O8
+    | ValuationDeclared
+    | AssumptionChanged
+    | ValuationInterpreted
 )
 
 
