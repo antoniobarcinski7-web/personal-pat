@@ -94,6 +94,17 @@ from pat.contracts.opportunity.valuation import (
     ValuationUnavailable,
     ValuationUnavailableReason,
 )
+from pat.contracts.opportunity.thesis import (
+    Catalyst,
+    InvestmentThesis,
+    Risk,
+    RiskSeverity,
+    ThesisAudit,
+    ThesisAuditIssue,
+    ThesisDirection,
+    ThesisDrafted,
+    ThesisIssue,
+)
 from pat.contracts.opportunity.events import EVENT_BODIES, EventBody, JournalEvent
 
 __all__ = [
@@ -109,6 +120,7 @@ __all__ = [
     "BlockerCleared",
     "BlockerRecorded",
     "CashFlowLine",
+    "Catalyst",
     "Claim",
     "ClaimAsserted",
     "CompanyProfile",
@@ -135,6 +147,7 @@ __all__ = [
     "HypothesisStatus",
     "HypothesisStatusChanged",
     "HypothesisStrength",
+    "InvestmentThesis",
     "JournalEvent",
     "MandateSet",
     "Note",
@@ -145,6 +158,8 @@ __all__ = [
     "QuestionOpened",
     "ResearchAgenda",
     "ResearchTask",
+    "Risk",
+    "RiskSeverity",
     "SLUG_PATTERN",
     "SensitivityGrid",
     "Severity",
@@ -155,6 +170,11 @@ __all__ = [
     "TaskPriorityChanged",
     "TaskStatus",
     "TaskStatusChanged",
+    "ThesisAudit",
+    "ThesisAuditIssue",
+    "ThesisDirection",
+    "ThesisDrafted",
+    "ThesisIssue",
     "TitleSet",
     "ValuationDeclared",
     "ValuationInterpretation",

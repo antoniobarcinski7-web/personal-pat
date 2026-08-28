@@ -79,6 +79,8 @@ from pat.contracts.opportunity import (
     TaskPriorityChanged,
     TaskStatus,
     TaskStatusChanged,
+    InvestmentThesis,
+    ThesisDrafted,
     TitleSet,
     ValuationDeclared,
     ValuationInterpretation,
@@ -117,7 +119,16 @@ class OpportunityState(Frozen):
     conclusions: tuple[Conclusion, ...] = ()
     valuations: tuple[ValuationModel, ...] = ()
     valuation_notes: tuple[ValuationInterpretation, ...] = ()
+    theses: tuple[InvestmentThesis, ...] = ()
     notes: tuple[Note, ...] = ()
+
+    def thesis(self, slug: str) -> InvestmentThesis | None:
+        """A versao CORRENTE da tese. As anteriores continuam no diario.
+
+        Uma tese que muda de LONG para NO_POSITION e a informacao mais
+        valiosa que o diario guarda; sobrescrever a apagaria.
+        """
+        return next((t for t in self.theses if t.slug == slug), None)
 
     def valuation(self, slug: str) -> ValuationModel | None:
         return next((v for v in self.valuations if v.slug == slug), None)
@@ -259,6 +270,7 @@ class _Builder:
     conclusions: dict[str, Conclusion] = field(default_factory=dict)
     valuations: dict[str, ValuationModel] = field(default_factory=dict)
     valuation_notes: list[ValuationInterpretation] = field(default_factory=list)
+    theses: dict[str, InvestmentThesis] = field(default_factory=dict)
 
     def hypothesis(self, slug: str, ev: JournalEvent) -> _HypothesisBuilder:
         hipotese = self.hypotheses.get(slug)
@@ -306,6 +318,7 @@ class _Builder:
             conclusions=tuple(self.conclusions.values()),
             valuations=tuple(self.valuations.values()),
             valuation_notes=tuple(self.valuation_notes),
+            theses=tuple(self.theses.values()),
             notes=tuple(self.notes),
         )
 
@@ -651,6 +664,15 @@ def _on_valuation_interpreted(
     )
 
 
+# -- tratadores: tese (O9) --------------------------------------------------
+
+
+def _on_thesis(b: _Builder, ev: JournalEvent, body: ThesisDrafted) -> None:
+    # Reescrever substitui o estado CORRENTE; o diario mantem as versoes
+    # anteriores. Guardar todas no estado faria "a tese" ficar ambigua.
+    b.theses[body.thesis.slug] = body.thesis
+
+
 _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     # O0
     WorkspaceCreated: _on_created,
@@ -686,6 +708,8 @@ _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     ValuationDeclared: _on_valuation,
     AssumptionChanged: _on_assumption_changed,
     ValuationInterpreted: _on_valuation_interpreted,
+    # O9
+    ThesisDrafted: _on_thesis,
 }
 
 

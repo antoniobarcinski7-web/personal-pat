@@ -47,10 +47,26 @@ from pat.opportunity.store import (
     new_workspace_id,
     open_workspace,
 )
+from pat.opportunity.reason import (
+    Reasoner,
+    ResearchContext,
+    ScriptedReasoner,
+    ShapeReasoner,
+)
+from pat.opportunity.research import (
+    AgendaRun,
+    build_context,
+    plan_agenda,
+    run_agenda,
+    run_task,
+)
+from pat.opportunity.thesis import audit_thesis
 from pat.opportunity.tools import AccountLine, PatTools, ToolContext
+from pat.opportunity.valuation import implied_growth, run_dcf, sensitivity
 
 __all__ = [
     "AccountLine",
+    "AgendaRun",
     "BrazilDocumentProvider",
     "DocumentInventory",
     "DocumentProvider",
@@ -59,6 +75,10 @@ __all__ = [
     "JournalCorrupt",
     "OpportunityState",
     "PatTools",
+    "Reasoner",
+    "ResearchContext",
+    "ScriptedReasoner",
+    "ShapeReasoner",
     "StoredDocument",
     "ToolContext",
     "USDocumentProvider",
@@ -66,15 +86,23 @@ __all__ = [
     "Workspace",
     "WorkspaceArchivedError",
     "WorkspaceNotFound",
+    "audit_thesis",
+    "build_context",
     "create_workspace",
     "critique",
     "falsification_agenda",
     "fold",
+    "implied_growth",
     "inventory",
     "list_workspaces",
     "new_workspace_id",
     "open_workspace",
+    "plan_agenda",
     "profile_for",
     "provider_for",
+    "run_agenda",
+    "run_dcf",
+    "run_task",
+    "sensitivity",
     "stored_documents",
 ]

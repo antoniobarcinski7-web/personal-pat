@@ -51,6 +51,7 @@ from pat.contracts.opportunity.valuation import (
     ValuationDeclared,
     ValuationInterpreted,
 )
+from pat.contracts.opportunity.thesis import ThesisDrafted
 from pat.contracts.opportunity.hypothesis import (
     ClaimAsserted,
     ConclusionDrawn,
@@ -102,6 +103,8 @@ EventBody = (
     | ValuationDeclared
     | AssumptionChanged
     | ValuationInterpreted
+    # O9
+    | ThesisDrafted
 )
 
 
