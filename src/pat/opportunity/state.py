@@ -34,17 +34,32 @@ from typing import Literal
 
 from pat.contracts.common import Frozen
 from pat.contracts.opportunity import (
+    Actor,
     AgendaObjectiveSet,
     AsOfAdvanced,
     Blocker,
     BlockerCleared,
     BlockerRecorded,
+    Claim,
+    ClaimAsserted,
     CompanyProfile,
+    Conclusion,
+    ConclusionDrawn,
+    CounterEvidence,
+    CounterEvidenceAdded,
     CoverageRefreshed,
     CoverageSnapshot,
     EventBody,
+    EvidenceLink,
+    EvidenceLinked,
+    FalsifierAdded,
     Finding,
     FindingRecorded,
+    Hypothesis,
+    HypothesisOpened,
+    HypothesisStatus,
+    HypothesisStatusChanged,
+    HypothesisStrength,
     JournalEvent,
     MandateSet,
     Note,
@@ -89,7 +104,29 @@ class OpportunityState(Frozen):
     state_version: Literal["v1"] = "v1"
     workspace: OpportunityWorkspace
     agenda: ResearchAgenda = ResearchAgenda()
+    hypotheses: tuple[Hypothesis, ...] = ()
+    claims: tuple[Claim, ...] = ()
+    conclusions: tuple[Conclusion, ...] = ()
     notes: tuple[Note, ...] = ()
+
+    def hypothesis(self, slug: str) -> Hypothesis | None:
+        return next((h for h in self.hypotheses if h.slug == slug), None)
+
+    def claim(self, slug: str) -> Claim | None:
+        return next((c for c in self.claims if c.slug == slug), None)
+
+    def conclusion_for(self, hypothesis: str) -> Conclusion | None:
+        return next((c for c in self.conclusions if c.hypothesis == hypothesis), None)
+
+    def claims_for(self, hypothesis: str) -> tuple[Claim, ...]:
+        alvo = self.hypothesis(hypothesis)
+        if alvo is None:
+            return ()
+        return tuple(c for c in self.claims if c.slug in alvo.claims)
+
+    @property
+    def open_hypotheses(self) -> tuple[Hypothesis, ...]:
+        return tuple(h for h in self.hypotheses if h.status is HypothesisStatus.OPEN)
 
     @property
     def workspace_id(self) -> str:
@@ -139,6 +176,40 @@ class _TaskBuilder:
 
 
 @dataclass
+class _HypothesisBuilder:
+    """Uma hipotese em construcao. Mutavel, nao escapa deste modulo."""
+
+    slug: str
+    statement: str
+    falsifiers: list[str]
+    opened_by: Actor
+    created_at: datetime
+    updated_at: datetime
+    open_questions: tuple[str, ...] = ()
+    status: HypothesisStatus = HypothesisStatus.OPEN
+    strength: HypothesisStrength | None = None
+    supporting: list[EvidenceLink] = field(default_factory=list)
+    counter: list[CounterEvidence] = field(default_factory=list)
+    claims: list[str] = field(default_factory=list)
+
+    def freeze(self) -> Hypothesis:
+        return Hypothesis(
+            slug=self.slug,
+            statement=self.statement,
+            status=self.status,
+            strength=self.strength,
+            falsifiers=tuple(self.falsifiers),
+            supporting=tuple(self.supporting),
+            counter=tuple(self.counter),
+            claims=tuple(self.claims),
+            open_questions=self.open_questions,
+            opened_by=self.opened_by,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
+
+
+@dataclass
 class _Builder:
     """Acumulador mutavel da dobra. Nao escapa deste modulo.
 
@@ -163,6 +234,21 @@ class _Builder:
     # tarefas. Ordenar por slug faria a agenda mudar de ordem quando alguem
     # renomeasse uma tarefa.
     tasks: dict[str, _TaskBuilder] = field(default_factory=dict)
+    hypotheses: dict[str, _HypothesisBuilder] = field(default_factory=dict)
+    claims: dict[str, Claim] = field(default_factory=dict)
+    # Uma conclusao por hipotese: redesenhar uma conclusao substitui a
+    # anterior no estado, e o diario guarda as duas. Acumular varias faria a
+    # tese citar a que o leitor achasse primeiro.
+    conclusions: dict[str, Conclusion] = field(default_factory=dict)
+
+    def hypothesis(self, slug: str, ev: JournalEvent) -> _HypothesisBuilder:
+        hipotese = self.hypotheses.get(slug)
+        if hipotese is None:
+            raise FoldError(
+                f"workspace {self.workspace_id}: evento {ev.body.kind!r} no seq "
+                f"{ev.seq} referencia a hipotese {slug!r}, que nao existe."
+            )
+        return hipotese
 
     def task(self, slug: str, ev: JournalEvent) -> _TaskBuilder:
         tarefa = self.tasks.get(slug)
@@ -196,6 +282,9 @@ class _Builder:
                 objective=self.agenda_objective,
                 tasks=tuple(t.freeze() for t in self.tasks.values()),
             ),
+            hypotheses=tuple(h.freeze() for h in self.hypotheses.values()),
+            claims=tuple(self.claims.values()),
+            conclusions=tuple(self.conclusions.values()),
             notes=tuple(self.notes),
         )
 
@@ -372,6 +461,117 @@ def _on_question_answered(b: _Builder, ev: JournalEvent, body: QuestionAnswered)
     )
 
 
+# -- tratadores: hipotese e evidencia (O2) ----------------------------------
+
+
+def _on_hypothesis_opened(b: _Builder, ev: JournalEvent, body: HypothesisOpened) -> None:
+    if body.slug in b.hypotheses:
+        raise FoldError(
+            f"workspace {b.workspace_id}: hipotese {body.slug!r} aberta duas vezes "
+            f"(seq {ev.seq}). Reabrir com outro enunciado apagaria a evidencia que "
+            "ja estava ligada a primeira."
+        )
+    b.hypotheses[body.slug] = _HypothesisBuilder(
+        slug=body.slug,
+        statement=body.statement,
+        falsifiers=list(body.falsifiers),
+        open_questions=body.open_questions,
+        opened_by=ev.actor,
+        created_at=ev.at,
+        updated_at=ev.at,
+    )
+
+
+def _on_falsifier_added(b: _Builder, ev: JournalEvent, body: FalsifierAdded) -> None:
+    hipotese = b.hypothesis(body.slug, ev)
+    if body.falsifier not in hipotese.falsifiers:
+        hipotese.falsifiers.append(body.falsifier)
+    hipotese.updated_at = ev.at
+
+
+def _on_evidence_linked(b: _Builder, ev: JournalEvent, body: EvidenceLinked) -> None:
+    hipotese = b.hypothesis(body.hypothesis, ev)
+    hipotese.supporting.append(body.link)
+    hipotese.updated_at = ev.at
+
+
+def _on_counter_evidence(b: _Builder, ev: JournalEvent, body: CounterEvidenceAdded) -> None:
+    hipotese = b.hypothesis(body.hypothesis, ev)
+    hipotese.counter.append(body.counter)
+    hipotese.updated_at = ev.at
+
+
+def _on_hypothesis_status(b: _Builder, ev: JournalEvent, body: HypothesisStatusChanged) -> None:
+    hipotese = b.hypothesis(body.slug, ev)
+    if body.status is HypothesisStatus.SUPPORTED and not hipotese.supporting:
+        raise FoldError(
+            f"workspace {b.workspace_id}: hipotese {body.slug!r} para SUPPORTED sem "
+            f"evidencia a favor (seq {ev.seq}). Ligue a evidencia antes."
+        )
+    if body.status is HypothesisStatus.REJECTED and not hipotese.counter:
+        raise FoldError(
+            f"workspace {b.workspace_id}: hipotese {body.slug!r} para REJECTED sem "
+            f"contra-evidencia (seq {ev.seq}). Rejeitar por mudanca de opiniao apaga "
+            "a razao, que e o que se le depois."
+        )
+    if body.status is HypothesisStatus.OPEN and body.strength is not None:
+        raise FoldError(
+            f"workspace {b.workspace_id}: hipotese {body.slug!r} volta a OPEN com "
+            f"forca declarada (seq {ev.seq}). Forca antes do teste e opiniao com "
+            "cara de veredito."
+        )
+    hipotese.status = body.status
+    # Voltar para OPEN limpa a forca: reabrir e dizer que o veredito anterior
+    # nao vale mais, e manter a forca antiga faria a hipotese reaberta parecer
+    # ja julgada.
+    hipotese.strength = None if body.status is HypothesisStatus.OPEN else body.strength
+    hipotese.updated_at = ev.at
+
+
+def _on_claim_asserted(b: _Builder, ev: JournalEvent, body: ClaimAsserted) -> None:
+    if body.slug in b.claims:
+        raise FoldError(
+            f"workspace {b.workspace_id}: claim {body.slug!r} afirmado duas vezes "
+            f"(seq {ev.seq})."
+        )
+    b.claims[body.slug] = Claim(
+        slug=body.slug,
+        text=body.text,
+        evidence=body.evidence,
+        asserted_by=ev.actor,
+        at=ev.at,
+    )
+    if body.hypothesis is not None:
+        hipotese = b.hypothesis(body.hypothesis, ev)
+        hipotese.claims.append(body.slug)
+        hipotese.updated_at = ev.at
+
+
+def _on_conclusion(b: _Builder, ev: JournalEvent, body: ConclusionDrawn) -> None:
+    hipotese = b.hypothesis(body.hypothesis, ev)
+    # OPEN e o unico estado que nao conclui, e a razao e estreita: OPEN quer
+    # dizer "ainda nao testada". WEAKENED e INCONCLUSIVE sao resultados de
+    # teste, e concluir a partir deles e justamente o que um analista honesto
+    # faz - "ha indicio, insuficiente" e "os dados nao resolvem isso" sao
+    # conclusoes, e das mais uteis. Exigir SUPPORTED ou REJECTED para poder
+    # concluir empurraria as duvidas para um dos extremos.
+    if hipotese.status is HypothesisStatus.OPEN:
+        raise FoldError(
+            f"workspace {b.workspace_id}: conclusao sobre a hipotese "
+            f"{body.hypothesis!r} ainda OPEN (seq {ev.seq}). Concluir de OPEN e "
+            "declarar veredito sem ter testado. Mude o estado primeiro - "
+            "INCONCLUSIVE tambem e um resultado."
+        )
+    b.conclusions[body.hypothesis] = Conclusion(
+        hypothesis=body.hypothesis,
+        text=body.text,
+        strength=body.strength,
+        residual_uncertainty=body.residual_uncertainty,
+        drawn_by=ev.actor,
+        at=ev.at,
+    )
+
+
 _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     # O0
     WorkspaceCreated: _on_created,
@@ -392,6 +592,14 @@ _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     BlockerCleared: _on_blocker_cleared,
     QuestionOpened: _on_question_opened,
     QuestionAnswered: _on_question_answered,
+    # O2
+    HypothesisOpened: _on_hypothesis_opened,
+    FalsifierAdded: _on_falsifier_added,
+    EvidenceLinked: _on_evidence_linked,
+    CounterEvidenceAdded: _on_counter_evidence,
+    HypothesisStatusChanged: _on_hypothesis_status,
+    ClaimAsserted: _on_claim_asserted,
+    ConclusionDrawn: _on_conclusion,
 }
 
 

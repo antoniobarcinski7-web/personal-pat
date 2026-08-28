@@ -42,6 +42,15 @@ from pat.contracts.opportunity.base import (
     WorkspaceCreated,
     WorkspaceReopened,
 )
+from pat.contracts.opportunity.hypothesis import (
+    ClaimAsserted,
+    ConclusionDrawn,
+    CounterEvidenceAdded,
+    EvidenceLinked,
+    FalsifierAdded,
+    HypothesisOpened,
+    HypothesisStatusChanged,
+)
 
 __all__ = ["EVENT_BODIES", "EventBody", "JournalEvent"]
 
@@ -69,6 +78,14 @@ EventBody = (
     | BlockerCleared
     | QuestionOpened
     | QuestionAnswered
+    # O2
+    | HypothesisOpened
+    | FalsifierAdded
+    | EvidenceLinked
+    | CounterEvidenceAdded
+    | HypothesisStatusChanged
+    | ClaimAsserted
+    | ConclusionDrawn
 )
 
 
