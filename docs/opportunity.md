@@ -158,8 +158,42 @@ Na saída, `stdout` é a fala e `stderr` traz a linha de auditoria:
 ## Pesquisa autônoma
 
 ```bash
-pat opportunity research --objective "a margem e a receita"
+pat opportunity research --objective "o que você acha da companhia?"
 ```
+
+Uma pergunta de investimento **não** se decompõe em métricas — ela se decompõe
+em **temas**, e cada tema pergunta algo que um analista reconheceria:
+
+| tema | pergunta |
+|---|---|
+| `crescimento` | a receita cresce, e a que ritmo? |
+| `rentabilidade` | o crescimento chega ao resultado operacional? |
+| `geracao-de-caixa` | o resultado vira caixa? |
+| `solvencia` | a estrutura de capital aguenta? |
+| `alocacao-de-capital` | para onde vai o caixa gerado? |
+| `narrativa` | o que a companhia diz sobre o próprio negócio e os riscos? |
+
+A tabela é declarada e versionada com o código (`opportunity/themes.py`). O que
+ela decide é apenas **quais** temas se aplicam: por relevância declarada e por
+disponibilidade real de métrica. Um planejador livre produziria decomposição
+diferente a cada execução, e duas investigações da mesma empresa não seriam
+comparáveis.
+
+Três consequências que valem registrar:
+
+- **Tema sem insumo não entra.** Viraria tarefa que só pode terminar em
+  bloqueio, e bloqueio previsível treina o leitor a ignorar bloqueio.
+- **Nenhum tema propõe hipótese.** Nenhuma regra sabe qual afirmação vale a
+  pena testar *nesta* empresa; propor uma por template daria a mesma para
+  todas. O que o tema abre é **pergunta**, honesta sobre o que o motor não
+  responde.
+- **A tabela é genérica.** Sem "assinantes", sem "churn": vocabulário de uma
+  indústria faria "investiga o churn" ser respondido com a série de receita —
+  substituição silenciosa do que foi perguntado. Pergunta que nenhum tema
+  responde não vira agenda inventada.
+
+Pergunta estreita continua pedindo um tema só: `--objective "investiga a
+dívida"` abre `solvencia`, e não os seis.
 
 O ciclo é explícito, e cada fase é uma função com nome:
 

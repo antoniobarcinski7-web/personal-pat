@@ -557,6 +557,61 @@ fictício desde a Fase 2.
 No mesmo motor, na mesma execução: Petrobras FY2024 em 204.234 MM BRL, regime
 `ifrs_cpc_br/BR`.
 
+### Balanço, caixa e a segunda metade do vocabulário
+
+Até a N1 o catálogo tinha 9 conceitos, todos de DRE — nenhuma pergunta sobre
+solvência ou geração de caixa tinha como ser respondida, por mais dado que se
+ingerisse. São 17 conceitos e 13 métricas agora:
+
+```bash
+pat metric divida_liquida@v1 --cik 1065280 --period-end 2024-12-31 --as-of 2025-06-30
+pat metric fcf@v1            --cik 1065280 --period-end 2024-12-31 --as-of 2025-06-30
+```
+
+Os bindings entram no mapeamento da Netflix **e** na família padronizada da
+CVM: `divida_bruta@v1` calcula nas duas jurisdições, sem uma linha de exceção.
+
+**Duas métricas de dívida bruta, não um parâmetro.** A decisão A4 exige que o
+arrendamento entre explicitamente; um `incluir_arrendamento=True` produziria
+dois números sob o mesmo `ref`, e nenhuma análise arquivada diria qual usou. Na
+Netflix a diferença é 2.412 MM — 15% da alavancagem. A família brasileira não
+liga arrendamento de propósito: a CVM reserva `2.01.04.03` e as companhias não
+o usam de forma consistente (o GPA publica 0,0 ali e põe 451 MM em
+`2.01.05.02.17`), então a métrica **recusa** em vez de devolver zero com
+`fidelity = exact`.
+
+### Arquivamentos da SEC no corpus
+
+```bash
+pat fetch sec.submissions --cik 1065280
+pat docs --cik 1065280 --sync --form 10-K
+pat evidence --cik 1065280 --query "competition streaming" --as-of 2025-06-30
+```
+
+O mesmo `sync_documents` dos dois lados. O que tornou isso possível sem um
+segundo pipeline foi `DocumentCandidate`: o catálogo IPE e o histórico de
+arquivamentos descrevem a mesma coisa com vocabulários diferentes, e sem um
+tipo comum haveria um ramo por regime — e o terceiro regime pediria um terceiro.
+
+O extrator de HTML tem `extraction_version` própria
+(`html-blocks/v1+python3.14.5`), usa só a biblioteca padrão e reusa o **mesmo**
+algoritmo de blocos do PDF: o tamanho de uma citação útil não depende do
+formato de origem. Verbatim continua byte a byte:
+
+```
+$ pat provenance-unit 9f9932104333...
+  locator    html[1]/body[1]/div[56]/table[1]/tr[28][35288:35299]
+  extracao   html-blocks/v1+python3.14.5
+  hash confere        sim
+  texto reextraido    IDENTICO
+```
+
+Três coisas que só a execução real expôs: o 10-K é **iXBRL** e começa com
+declaração XML, não com `<html>` (o sniff de 1 KB não alcançava a raiz);
+documento com extração falha nunca era reprocessado, então ficaria
+permanentemente não citável depois que o extrator passou a existir; e "NÃO
+extraído" significava "falhou uma vez" em vez de "sem unidade hoje".
+
 ### Netflix, e a métrica que o sistema se recusa a calcular
 
 O segundo mapeamento americano (`mappings/us/netflix.toml`) existe em boa parte
