@@ -46,6 +46,7 @@ from pat.contracts.opportunity import (
     RiskSeverity,
     Severity,
     ThesisDirection,
+    ThesisIssue,
     ThesisDrafted,
     TurnRequest,
     ValuationDeclared,
@@ -283,8 +284,15 @@ def test_a_investigacao_inteira(ws, tools, corpus, root):
     auditoria = audit_thesis(ws.state, tese)
     assert auditoria.claims_checked == 1
     assert auditoria.evidence_refs, "a tese resolve ate um endereco"
-    duros = [i for i in auditoria.issues if i.severity is Severity.HARD]
-    assert not duros, [i.message for i in duros]
+    # A auditoria acha UM problema, e ele esta certo: os temas da N3 abriram
+    # perguntas na agenda, e esta tese nao as lista em `unresolved`. E
+    # exatamente o que `OPEN_QUESTIONS_UNLISTED` existe para pegar - a tese
+    # parece mais completa do que a investigacao esta.
+    codigos = {i.issue for i in auditoria.issues}
+    assert codigos == {ThesisIssue.OPEN_QUESTIONS_UNLISTED}, [
+        i.message for i in auditoria.issues
+    ]
+    assert all(i.remedy for i in auditoria.issues)
 
     # -- 10. o critico continua discordando, e isso e o ponto ---------------
     final = critique(ws.state)

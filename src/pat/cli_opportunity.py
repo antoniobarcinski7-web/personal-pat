@@ -544,10 +544,15 @@ def cmd_opp_thesis(args) -> int:
             f"{len(auditoria.issues)} problema(s)"
         )
         for problema in auditoria.issues:
-            marca = "DURO" if problema.severity is Severity.HARD else "leve"
-            duras += problema.severity is Severity.HARD
-            print(f"    [{marca}] {problema.code.value}: {problema.message}")
+            # `ThesisAuditIssue` nao tem severidade, e nao deve ter: a
+            # auditoria confere INTEGRIDADE REFERENCIAL, e uma cadeia que se
+            # rompe se rompeu - nao ha problema leve de tese que cita claim
+            # inexistente. Quem gradua severidade e o critico, sobre hipotese.
+            print(f"    [{problema.issue.value}] {problema.message}")
             print(f"      remedio: {problema.remedy}")
+            if problema.ref:
+                print(f"      referencia: {problema.ref}")
+        duras += len(auditoria.issues)
     return 1 if duras else 0
 
 

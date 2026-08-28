@@ -80,18 +80,22 @@ def test_investiga_isso_vira_agenda_executada(ws, tools, root):
     criados = plan_agenda(
         ws, tools, reasoner, objective="investigar receita e margem da companhia"
     )
-    assert set(criados) == {"receita-liquida", "margem-ebitda"}
+    # Desde a N3 a decomposicao e por TEMA, e nao por metrica: "receita e
+    # margem" vira as duas perguntas que um analista faria, cada uma com o seu
+    # criterio de conclusao. Uma tarefa por metrica nao tinha criterio que
+    # valesse alguma coisa - "levantei a metrica" e sempre verdade.
+    assert set(criados) == {"crescimento", "rentabilidade"}
     assert ws.state.agenda.objective.startswith("investigar receita")
 
     corrida = run_agenda(ws, tools, reasoner)
 
     assert len(corrida.reports) == 2
-    assert set(corrida.completed) == {"receita-liquida", "margem-ebitda"}
+    assert set(corrida.completed) == {"crescimento", "rentabilidade"}
     assert corrida.blocked == ()
     assert corrida.stopped_because == "agenda exaurida"
 
     # Os achados citam numero do motor, e estao no diario.
-    tarefa = ws.state.agenda.task("receita-liquida")
+    tarefa = ws.state.agenda.task("crescimento")
     assert tarefa.status is TaskStatus.COMPLETE
     assert tarefa.grounded_findings, "o achado cita o resultado que o sustenta"
     assert all(f.actor is Actor.AGENT for f in tarefa.findings)
@@ -99,7 +103,7 @@ def test_investiga_isso_vira_agenda_executada(ws, tools, root):
     # E sobrevive ao processo.
     reaberto = open_workspace(root, ws.workspace_id)
     assert reaberto.state == ws.state
-    assert reaberto.state.agenda.task("margem-ebitda").status is TaskStatus.COMPLETE
+    assert reaberto.state.agenda.task("rentabilidade").status is TaskStatus.COMPLETE
 
 
 def test_citacao_inventada_e_barrada_e_registrada(ws, tools):
@@ -369,7 +373,7 @@ def test_o_relatorio_diz_quem_raciocinou(ws, tools):
     diferentes."""
     reasoner = ShapeReasoner()
     plan_agenda(ws, tools, reasoner, objective="receita")
-    relatorio = run_task(ws, tools, reasoner, slug="receita-liquida")
+    relatorio = run_task(ws, tools, reasoner, slug="crescimento")
     assert relatorio.reasoner_id == "shape/v1"
 
 
@@ -378,7 +382,7 @@ def test_o_raciocinador_deterministico_nao_explica_causa(ws, tools):
     seria um gerador de causa plausivel."""
     reasoner = ShapeReasoner()
     plan_agenda(ws, tools, reasoner, objective="receita")
-    relatorio = run_task(ws, tools, reasoner, slug="receita-liquida")
+    relatorio = run_task(ws, tools, reasoner, slug="crescimento")
     for finding in relatorio.findings:
         baixo = finding.text.lower()
         for causal in (" porque ", " devido ", " por conta ", " gracas a "):

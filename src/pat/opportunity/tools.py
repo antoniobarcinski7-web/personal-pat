@@ -222,6 +222,21 @@ class PatTools:
 
     # -- numeros -------------------------------------------------------------
 
+    def periods_of_type(self, period_type: str) -> tuple[date, ...]:
+        """Datas-base de um tipo de periodo so, sob o `as_of` da mesa.
+
+        `periods()` mistura anual, trimestral e instantaneo. Quem pede uma
+        metrica anual em toda data coberta recebe uma recusa por trimestre -
+        recusa correta para uma pergunta errada.
+        """
+        from pat.query.asof import AsOf
+
+        return AsOf(self._conn).period_ends_of_type(
+            self._context.entity_id,
+            period_type=period_type,
+            as_of=self._context.as_of,
+        )
+
     def metric(self, ref: str, *, period_end: date):
         """Uma metrica num periodo. `MetricResult` ou `MetricUnavailable`.
 

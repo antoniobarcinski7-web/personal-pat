@@ -448,6 +448,39 @@ class AsOf:
             latest_knowledge_date=row[2],
         )
 
+    def period_ends_of_type(
+        self,
+        entity_id: str,
+        *,
+        period_type: str,
+        as_of: date | None = None,
+    ) -> tuple[date, ...]:
+        """Datas-base de um tipo de periodo so. Ordenadas.
+
+        Existe porque `coverage().period_ends` mistura anual, trimestral e
+        instantaneo, e quem pede uma metrica ANUAL em toda data coberta recebe
+        uma recusa `WRONG_PERIOD_TYPE` por trimestre. As recusas estao certas -
+        o erro e da pergunta, e esta consulta e o que permite fazer a pergunta
+        certa sem adivinhar o tipo pela forma da data.
+
+        Adivinhar seria inferencia por formato: 31 de dezembro e fim de
+        exercicio para a Netflix e nao e para a Intel, cujo ano fiscal fecha no
+        ultimo sabado de dezembro.
+        """
+        predicate = "AND knowledge_date <= ?" if as_of is not None else ""
+        params: list[object] = [entity_id, period_type]
+        if as_of is not None:
+            params.append(as_of)
+        rows = self.conn.execute(
+            f"""
+            SELECT DISTINCT period_end FROM gold_fact
+            WHERE entity_id = ? AND period_type = ? {predicate}
+            ORDER BY period_end
+            """,
+            params,
+        ).fetchall()
+        return tuple(r[0] for r in rows)
+
     def accounts(
         self,
         *,

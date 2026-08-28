@@ -43,6 +43,7 @@ from pat.contracts.opportunity import (
     BlockerRecorded,
     FindingRecorded,
     HypothesisOpened,
+    QuestionOpened,
     TaskCreated,
     TaskStatus,
     TaskStatusChanged,
@@ -117,6 +118,8 @@ def build_context(workspace: Workspace, tools: PatTools) -> ResearchContext:
         missing_concepts=cobertura.missing_concepts,
         open_questions=tuple(q.text for _, q in estado.agenda.all_open_questions),
         mandate=estado.workspace.mandate,
+        annual_periods=tools.periods_of_type("year"),
+        instant_periods=tools.periods_of_type("instant"),
     )
 
 
@@ -179,7 +182,31 @@ def plan_agenda(
         )
         existentes.add(proposta.slug)
         criados.append(proposta.slug)
+
+        # As perguntas que o motor NAO responde entram na agenda como
+        # perguntas, e nao viram hipotese. Uma pergunta aberta e honesta sobre
+        # o que falta; uma hipotese inventada por template daria a mesma
+        # afirmacao para todas as empresas.
+        for i, pergunta in enumerate(_perguntas_do_tema(proposta.slug)):
+            workspace.apply(
+                QuestionOpened(
+                    task=proposta.slug,
+                    slug=f"{proposta.slug}-q{i}"[:63],
+                    text=pergunta,
+                ),
+                actor=actor,
+            )
     return tuple(criados)
+
+
+def _perguntas_do_tema(slug: str) -> tuple[str, ...]:
+    """As perguntas declaradas do tema, quando a tarefa nasceu de um."""
+    from pat.opportunity.themes import THEMES
+
+    for tema in THEMES:
+        if tema.slug == slug:
+            return tema.open_questions
+    return ()
 
 
 # ---------------------------------------------------------------------------

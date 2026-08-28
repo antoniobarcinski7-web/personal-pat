@@ -83,9 +83,39 @@ class ResearchContext:
     open_questions: tuple[str, ...] = ()
     mandate: str | None = None
 
+    annual_periods: tuple[date, ...] = ()
+    """Datas-base de exercicio ANUAL, so elas.
+
+    `periods` mistura anual, trimestral e instantaneo, e pedir uma metrica
+    anual em toda data coberta produz uma recusa `WRONG_PERIOD_TYPE` por
+    trimestre. As recusas estao certas; o erro e da pergunta. Separar aqui e o
+    que permite perguntar direito sem adivinhar o tipo pela forma da data - 31
+    de dezembro e fim de exercicio para uma companhia e nao e para outra.
+    """
+
+    instant_periods: tuple[date, ...] = ()
+    """Datas-base de saldo. Conceito STOCK resolve nelas."""
+
     @property
     def has_corpus(self) -> bool:
         return self.documents > 0
+
+    def periods_for(self, ref: str) -> tuple[date, ...]:
+        """As datas-base em que faz sentido pedir esta metrica.
+
+        A escolha sai do REGISTRO da metrica - `period_kind` -, e nao de uma
+        lista de nomes: uma metrica nova de balanco funciona sem tocar aqui.
+        """
+        from pat.contracts.semantics import PeriodKind
+        from pat.semantics.registry import default_registry
+
+        try:
+            definicao = default_registry().get(ref).definition
+        except Exception:  # noqa: BLE001 - metrica desconhecida cai no default
+            return self.annual_periods or self.periods
+        if definicao.period_kind is PeriodKind.STOCK:
+            return self.instant_periods or self.periods
+        return self.annual_periods or self.periods
 
 
 @runtime_checkable
@@ -298,8 +328,28 @@ class ShapeReasoner:
         testar nesta empresa - propor uma por template daria a mesma hipotese
         para todas.
         """
+        from pat.opportunity.themes import themes_for
+
+        disponiveis = frozenset(context.metrics_available)
+        temas = themes_for(
+            objective, available=disponiveis, has_corpus=context.has_corpus
+        )
+        propostas = [
+            TaskProposal(
+                slug=tema.slug,
+                objective=tema.question,
+                completion_criteria=tema.completion_criteria,
+                priority=tema.priority,
+                depends_on=tema.depends_on,
+            )
+            for tema in temas
+        ]
+        if propostas:
+            return tuple(propostas), ()
+
+        # Nenhum TEMA casou: cai para a tabela de metricas, que responde
+        # pergunta estreita ("levanta o EBITDA") sem virar investigacao.
         alvos = self._metricas_do_texto(objective, context)
-        propostas = []
         for metrica in alvos:
             slug = metrica.split("@")[0].replace("_", "-")
             propostas.append(
@@ -331,9 +381,15 @@ class ShapeReasoner:
     def plan(
         self, *, task: ResearchTask, context: ResearchContext
     ) -> tuple[StepRequest, ...]:
-        periodos = context.periods[-MAX_PERIODOS:]
         passos: list[StepRequest] = []
-        for i, metrica in enumerate(self._metricas_do_texto(task.objective, context)):
+        for i, metrica in enumerate(self._metricas_da_tarefa(task, context)):
+            # Cada metrica pergunta nas datas do SEU tipo de periodo. Antes
+            # disto, uma metrica anual era pedida em todo periodo coberto e
+            # voltava com uma recusa por trimestre - relatorio cheio de
+            # `wrong_period_type` que treina o leitor a ignorar recusa.
+            periodos = context.periods_for(metrica)[-MAX_PERIODOS:]
+            if not periodos:
+                continue
             passos.append(
                 StepRequest(
                     step_id=f"m{i}-{metrica.split('@')[0].replace('_', '-')}"[:63],
@@ -347,11 +403,10 @@ class ShapeReasoner:
                 )
             )
         if context.has_corpus:
-            termos = self._termos_de_busca(task.objective)
-            if termos:
+            for j, termos in enumerate(self._termos_da_tarefa(task)):
                 passos.append(
                     StepRequest(
-                        step_id="evidencia",
+                        step_id=f"evidencia-{j}"[:63],
                         kind=StepKind.EVIDENCE,
                         terms=termos,
                         rationale=(
@@ -361,6 +416,23 @@ class ShapeReasoner:
                     )
                 )
         return tuple(passos)
+
+    @staticmethod
+    def _termos_da_tarefa(task: ResearchTask) -> tuple[tuple[str, ...], ...]:
+        """Os grupos de busca DECLARADOS do tema. Nenhum, quando nao ha tema.
+
+        Derivar termos da pergunta em prosa produzia busca em portugues contra
+        arquivamento em ingles: `no_match` em todo tema, uma recusa correta
+        para uma pergunta que o sistema nao deveria ter feito. Tarefa que nao
+        nasceu de tema nao busca - o analista pede a busca que quer com
+        `pat evidence`.
+        """
+        from pat.opportunity.themes import THEMES
+
+        for tema in THEMES:
+            if tema.slug == task.slug:
+                return tema.search_terms
+        return ()
 
     def interpret(
         self,
@@ -453,6 +525,24 @@ class ShapeReasoner:
         )
 
     # -- internos ------------------------------------------------------------
+
+    def _metricas_da_tarefa(
+        self, task: ResearchTask, context: ResearchContext
+    ) -> tuple[str, ...]:
+        """As metricas de uma tarefa: pelo TEMA quando ha um, senao pelo texto.
+
+        Quando a tarefa nasceu de um tema, as metricas ja estao declaradas -
+        reencontra-las pelo texto da pergunta ("o resultado vira caixa?")
+        dependeria de a tabela de termos conter as palavras certas, e um tema
+        novo passaria a depender de alguem lembrar de acrescenta-las.
+        """
+        from pat.opportunity.themes import THEMES
+
+        disponiveis = frozenset(context.metrics_available)
+        for tema in THEMES:
+            if tema.slug == task.slug:
+                return tuple(m for m in tema.metrics if m in disponiveis)
+        return self._metricas_do_texto(task.objective, context)
 
     def _metricas_do_texto(
         self, texto: str, context: ResearchContext
