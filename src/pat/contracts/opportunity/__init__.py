@@ -70,11 +70,20 @@ from pat.contracts.opportunity.hypothesis import (
     HypothesisStatusChanged,
     HypothesisStrength,
 )
+from pat.contracts.opportunity.critic import (
+    AlternativeConsidered,
+    Critique,
+    CritiqueFinding,
+    FalsificationAttempted,
+    Severity,
+    WorkspaceFinding,
+)
 from pat.contracts.opportunity.events import EVENT_BODIES, EventBody, JournalEvent
 
 __all__ = [
     "Actor",
     "AgendaObjectiveSet",
+    "AlternativeConsidered",
     "AsOfAdvanced",
     "Blocker",
     "BlockerCleared",
@@ -88,11 +97,14 @@ __all__ = [
     "CounterEvidenceAdded",
     "CoverageRefreshed",
     "CoverageSnapshot",
+    "Critique",
+    "CritiqueFinding",
     "EVENT_BODIES",
     "EventBody",
     "EvidenceKind",
     "EvidenceLink",
     "EvidenceLinked",
+    "FalsificationAttempted",
     "FalsifierAdded",
     "Finding",
     "FindingRecorded",
@@ -112,6 +124,7 @@ __all__ = [
     "ResearchAgenda",
     "ResearchTask",
     "SLUG_PATTERN",
+    "Severity",
     "Slug",
     "TERMINAL_STATUSES",
     "TaskCreated",
@@ -123,6 +136,7 @@ __all__ = [
     "WORKSPACE_ID_PATTERN",
     "WorkspaceArchived",
     "WorkspaceCreated",
+    "WorkspaceFinding",
     "WorkspaceId",
     "WorkspaceReopened",
     "WorkspaceStatus",

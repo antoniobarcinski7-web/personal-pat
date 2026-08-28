@@ -23,6 +23,7 @@ Montagem tipica:
 from __future__ import annotations
 
 from pat.opportunity.company import UnknownEntity, profile_for
+from pat.opportunity.critic import critique, falsification_agenda
 from pat.opportunity.documents import (
     DocumentInventory,
     DocumentProvider,
@@ -66,6 +67,8 @@ __all__ = [
     "WorkspaceArchivedError",
     "WorkspaceNotFound",
     "create_workspace",
+    "critique",
+    "falsification_agenda",
     "fold",
     "inventory",
     "list_workspaces",

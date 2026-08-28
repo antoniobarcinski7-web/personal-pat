@@ -36,6 +36,7 @@ from pat.contracts.common import Frozen
 from pat.contracts.opportunity import (
     Actor,
     AgendaObjectiveSet,
+    AlternativeConsidered,
     AsOfAdvanced,
     Blocker,
     BlockerCleared,
@@ -52,6 +53,7 @@ from pat.contracts.opportunity import (
     EventBody,
     EvidenceLink,
     EvidenceLinked,
+    FalsificationAttempted,
     FalsifierAdded,
     Finding,
     FindingRecorded,
@@ -189,6 +191,8 @@ class _HypothesisBuilder:
     status: HypothesisStatus = HypothesisStatus.OPEN
     strength: HypothesisStrength | None = None
     supporting: list[EvidenceLink] = field(default_factory=list)
+    attempts: list[FalsificationAttempted] = field(default_factory=list)
+    alternatives: list[AlternativeConsidered] = field(default_factory=list)
     counter: list[CounterEvidence] = field(default_factory=list)
     claims: list[str] = field(default_factory=list)
 
@@ -202,6 +206,8 @@ class _HypothesisBuilder:
             supporting=tuple(self.supporting),
             counter=tuple(self.counter),
             claims=tuple(self.claims),
+            falsification_attempts=tuple(self.attempts),
+            alternatives=tuple(self.alternatives),
             open_questions=self.open_questions,
             opened_by=self.opened_by,
             created_at=self.created_at,
@@ -528,6 +534,18 @@ def _on_hypothesis_status(b: _Builder, ev: JournalEvent, body: HypothesisStatusC
     hipotese.updated_at = ev.at
 
 
+def _on_falsification(b: _Builder, ev: JournalEvent, body: FalsificationAttempted) -> None:
+    hipotese = b.hypothesis(body.hypothesis, ev)
+    hipotese.attempts.append(body)
+    hipotese.updated_at = ev.at
+
+
+def _on_alternative(b: _Builder, ev: JournalEvent, body: AlternativeConsidered) -> None:
+    hipotese = b.hypothesis(body.hypothesis, ev)
+    hipotese.alternatives.append(body)
+    hipotese.updated_at = ev.at
+
+
 def _on_claim_asserted(b: _Builder, ev: JournalEvent, body: ClaimAsserted) -> None:
     if body.slug in b.claims:
         raise FoldError(
@@ -600,6 +618,9 @@ _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     HypothesisStatusChanged: _on_hypothesis_status,
     ClaimAsserted: _on_claim_asserted,
     ConclusionDrawn: _on_conclusion,
+    # O7
+    FalsificationAttempted: _on_falsification,
+    AlternativeConsidered: _on_alternative,
 }
 
 

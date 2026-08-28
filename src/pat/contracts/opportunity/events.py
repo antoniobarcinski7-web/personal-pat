@@ -42,6 +42,10 @@ from pat.contracts.opportunity.base import (
     WorkspaceCreated,
     WorkspaceReopened,
 )
+from pat.contracts.opportunity.critic import (
+    AlternativeConsidered,
+    FalsificationAttempted,
+)
 from pat.contracts.opportunity.hypothesis import (
     ClaimAsserted,
     ConclusionDrawn,
@@ -86,6 +90,9 @@ EventBody = (
     | HypothesisStatusChanged
     | ClaimAsserted
     | ConclusionDrawn
+    # O7
+    | FalsificationAttempted
+    | AlternativeConsidered
 )
 
 

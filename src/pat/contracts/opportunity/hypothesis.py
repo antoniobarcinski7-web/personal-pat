@@ -238,6 +238,16 @@ class Hypothesis(Frozen):
     claims: tuple[Slug, ...] = Field(
         default=(), description="Claims que esta hipotese sustenta, por slug"
     )
+    falsification_attempts: tuple["FalsificationAttempted", ...] = Field(
+        default=(),
+        description=(
+            "Registros de que alguem procurou o que a derrubaria. Zero aqui e o "
+            "que distingue 'nao achamos' de 'nao procuramos'"
+        ),
+    )
+    alternatives: tuple["AlternativeConsidered", ...] = Field(
+        default=(), description="Explicacoes alternativas consideradas"
+    )
     open_questions: tuple[str, ...] = ()
     opened_by: Actor
     created_at: AwareDatetime
@@ -274,6 +284,27 @@ class Hypothesis(Frozen):
     @property
     def is_settled(self) -> bool:
         return self.status in (HypothesisStatus.SUPPORTED, HypothesisStatus.REJECTED)
+
+    @property
+    def was_falsification_attempted(self) -> bool:
+        """Alguem procurou o contrario, e ficou registrado COMO.
+
+        Sem isso, uma hipotese sustentada com zero contra-evidencias e
+        ambigua entre "procuramos e nao achamos" e "nao procuramos" - e as
+        duas pedem leituras opostas.
+        """
+        return bool(self.falsification_attempts)
+
+    @property
+    def falsifiers_tested(self) -> tuple[str, ...]:
+        return tuple(
+            a.falsifier for a in self.falsification_attempts if a.falsifier
+        )
+
+    @property
+    def untested_falsifiers(self) -> tuple[str, ...]:
+        testados = set(self.falsifiers_tested)
+        return tuple(f for f in self.falsifiers if f not in testados)
 
 
 class Conclusion(Frozen):
@@ -354,3 +385,15 @@ class ConclusionDrawn(Frozen):
     text: str = Field(min_length=1)
     strength: HypothesisStrength
     residual_uncertainty: str = Field(min_length=1)
+
+
+# Importado no fim, e nao no topo: `critic.py` declara os dois eventos e nao
+# depende deste modulo, mas `Hypothesis` precisa deles no proprio tipo. O
+# import tardio e o preco de manter a taxonomia de falsificacao junto do
+# critico que a usa, em vez de espalha-la por dois arquivos.
+from pat.contracts.opportunity.critic import (  # noqa: E402
+    AlternativeConsidered,
+    FalsificationAttempted,
+)
+
+Hypothesis.model_rebuild()
