@@ -34,12 +34,16 @@ from pat.opportunity.store import (
     new_workspace_id,
     open_workspace,
 )
+from pat.opportunity.tools import AccountLine, PatTools, ToolContext
 
 __all__ = [
+    "AccountLine",
     "FoldError",
     "Journal",
     "JournalCorrupt",
     "OpportunityState",
+    "PatTools",
+    "ToolContext",
     "UnknownEntity",
     "Workspace",
     "WorkspaceArchivedError",

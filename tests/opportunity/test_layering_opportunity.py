@@ -62,6 +62,7 @@ TERMOS_DE_REGIME = (
 EXCECOES = {
     "company.py": "traduz identidade do catalogo; cita scheme, nunca semantica de regime",
     "providers.py": "raiz de composicao dos adapters de documento",
+    "tools.py": "traduz o endereco de conta do regime em codigo opaco, uma vez",
 }
 
 PROIBIDO_IMPORTAR = (
@@ -111,6 +112,26 @@ def test_opportunity_nao_importa_ingestao_nem_taxonomia(path: Path):
                 "taxonomia concreta ficam abaixo do PAT; o Opportunity so ve a "
                 "interface publica."
             )
+
+
+def test_a_excecao_de_tools_e_estreita():
+    """`tools.py` pode nomear o campo de endereco de conta que o PAT devolve;
+    nao pode conhecer taxonomia, fonte nem tipo de arquivo de regime.
+
+    A traducao acontece UMA vez, em `accounts()`, e o que sai dali e
+    `account_code`, opaco. Se um segundo lugar do arquivo precisar do nome
+    original, a traducao vazou.
+    """
+    texto = _texto(OPPORTUNITY / "tools.py").lower()
+    for proibido in (r"\bdfp\b", r"\bedgar\b", r"\bus_gaap\b", r"\bcvm\b", r"\bsec\b"):
+        assert re.search(proibido, texto) is None, (
+            f"tools.py cita {proibido}: isso e regime, e a mesa nao pode ter um."
+        )
+    assert texto.count("cd_conta") == 1, (
+        "o endereco de conta do regime aparece mais de uma vez em tools.py. "
+        "A traducao para `account_code` e um ponto so; dois pontos ja e a "
+        "taxonomia vazando para a camada que nao pode ter jurisdicao."
+    )
 
 
 def test_a_excecao_de_company_e_estreita():
