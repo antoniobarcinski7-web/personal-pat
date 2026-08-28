@@ -54,8 +54,21 @@ class Paths:
         """
         return self.home / "chat"
 
+    @property
+    def opportunity(self) -> Path:
+        """Diarios dos workspaces do Opportunity. Um diretorio por workspace.
+
+        Ao contrario de `chat`, isto NAO e conveniencia de UI: o diario e a
+        unica copia do raciocinio - o que foi suposto, o que foi rejeitado e
+        por que. O warehouse guarda o numero; nada nele guarda a razao de
+        alguem ter mudado de ideia sobre a empresa. Apagar este diretorio
+        perde a investigacao inteira, e por isso ele nao mora dentro de
+        `chat/`.
+        """
+        return self.home / "opportunity"
+
     def ensure(self) -> "Paths":
-        for path in (self.home, self.bronze, self.runs, self.llm, self.chat):
+        for path in (self.home, self.bronze, self.runs, self.llm, self.chat, self.opportunity):
             path.mkdir(parents=True, exist_ok=True)
         return self
 
