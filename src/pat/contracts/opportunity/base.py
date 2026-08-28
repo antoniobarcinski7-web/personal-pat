@@ -72,6 +72,11 @@ def _check_slug(v: str) -> str:
     return v
 
 
+def check_slug(v: str) -> str:
+    """Porta publica do teste de slug. Mesma razao de `check_workspace_id`."""
+    return _check_slug(v)
+
+
 def check_workspace_id(v: str) -> str:
     """Porta publica do mesmo teste. Chamada antes de o valor virar caminho de
     arquivo - e nao depois, com um `..` ja resolvido pelo sistema operacional."""
@@ -243,43 +248,6 @@ class WorkspaceArchived(Frozen):
 
 class WorkspaceReopened(Frozen):
     kind: Literal["workspace_reopened"] = "workspace_reopened"
-
-
-class JournalEvent(Frozen):
-    """Uma linha do diario.
-
-    `seq` comeca em 1 e nao tem buraco. `at` e o relogio de quando o evento
-    foi gravado, e nao tem nada a ver com `as_of`: um evento gravado hoje pode
-    falar do mundo como ele era em 2024, e confundir os dois e exatamente o
-    erro que a regra bitemporal existe para impedir.
-    """
-
-    event_version: Literal["v1"] = "v1"
-    seq: int = Field(ge=1)
-    at: AwareDatetime
-    actor: Actor
-    body: "EventBody" = Field(discriminator="kind")
-
-    @property
-    def kind(self) -> str:
-        return self.body.kind
-
-
-# A uniao cresce a cada milestone. Ela e importada por `opportunity/reduce.py`,
-# que exige um tratador para cada membro - o que faz um corpo novo sem dobra
-# falhar em teste, e nao virar evento que o replay ignora em silencio.
-EventBody = (
-    WorkspaceCreated
-    | MandateSet
-    | TitleSet
-    | AsOfAdvanced
-    | CoverageRefreshed
-    | NoteAdded
-    | WorkspaceArchived
-    | WorkspaceReopened
-)
-
-JournalEvent.model_rebuild()
 
 
 class OpportunityWorkspace(Frozen):
