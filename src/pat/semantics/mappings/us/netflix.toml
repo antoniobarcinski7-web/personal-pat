@@ -1,0 +1,226 @@
+# Netflix, Inc. (CIK 0001065280, ticker NFLX).
+#
+# O SEGUNDO mapeamento americano, e ele existe em boa parte para provar que o
+# primeiro nao virou familia por acidente: a Netflix escolhe elementos
+# DIFERENTES da Intel para as MESMAS linhas. Receita e `Revenues` aqui e
+# `RevenueFromContractWithCustomerExcludingAssessedTax` la; custo e
+# `CostOfRevenue` aqui e `CostOfGoodsAndServicesSold` la. Nenhum sistema que
+# casasse elemento por semelhanca acertaria as duas.
+#
+# Conferido contra o `companyfacts` da SEC ja no bronze (sha256 00f34490...,
+# 3,4 MB), nos exercicios FY2023 e FY2024, ambos encerrados em 31 de dezembro
+# - ao contrario da Intel, a Netflix usa ano-calendario.
+
+mapping_id      = "us:cik:0001065280"
+mapping_version = "v1"
+framework       = "us_gaap"
+taxonomy        = "us-gaap.xbrl"
+jurisdiction    = "US"
+source          = "sec.companyfacts"
+entity_id       = "us:cik:0001065280"
+
+verified_by      = "antonio.barcinski"
+verified_against = "SEC companyfacts CIK 0001065280, FY2023 e FY2024, 10-K"
+
+# ---------------------------------------------------------------------------
+# Receita
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "revenue_net"
+fidelity   = "exact"
+equivalence_basis = """
+A Netflix usa `Revenues`, o elemento generico de receita do us-gaap. A Intel \
+NAO o usa - ela publica `RevenueFromContractWithCustomerExcludingAssessedTax`. \
+As duas companhias reportam a mesma grandeza economica sob elementos \
+diferentes, e essa e a razao pela qual nao existe familia us-gaap neste \
+projeto: cada emissor ganha o seu arquivo, e a equivalencia e afirmada uma vez \
+por emissor.
+
+A Netflix nao cobra tributos sobre venda separadamente na apresentacao da \
+receita (o modelo de assinatura recolhe imposto indireto em algumas \
+jurisdicoes, apresentado liquido), entao `Revenues` ja e receita liquida - a \
+definicao de `revenue_net`.
+
+Conferido: FY2023 US$ 33.723,3 MM, FY2024 US$ 39.001,0 MM. Os dois batem com a \
+demonstracao de resultado do 10-K.
+
+Positivo na origem, ja na convencao do conceito; sign=+1.
+"""
+[[binding.line]]
+element   = "Revenues"
+statement = "income"
+sign      = 1
+label_as_reported = "Revenues"
+
+# ---------------------------------------------------------------------------
+# Custo
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "cogs"
+fidelity   = "exact"
+equivalence_basis = """
+`CostOfRevenue` e o custo de receita da Netflix: majoritariamente amortizacao \
+de conteudo, mais custos de entrega (CDN, pagamento, royalties). E o outro \
+elemento valido para a mesma linha que a Intel resolveu com \
+`CostOfGoodsAndServicesSold` - de novo, a escolha e do emissor.
+
+Publicado POSITIVO (US$ 21.038,5 MM em FY2024), na mesma convencao do conceito \
+("positivo = despesa"). Sign=+1, sem inversao.
+
+Conferido pela identidade da propria demonstracao, ver o binding de \
+`operating_expenses_net`.
+
+NOTA PARA QUEM FOR MEXER EM D&A: a amortizacao de conteudo mora AQUI DENTRO, e \
+nao numa linha de D&A. Ver a secao "Por que d_and_a_pnl NAO esta ligado" no fim \
+deste arquivo antes de tentar somar D&A de volta a este numero.
+"""
+[[binding.line]]
+element   = "CostOfRevenue"
+statement = "income"
+sign      = 1
+label_as_reported = "Cost of revenues"
+
+# ---------------------------------------------------------------------------
+# Despesas operacionais
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "operating_expenses_net"
+fidelity   = "exact"
+equivalence_basis = """
+A Netflix NAO publica `OperatingExpenses` como total anual - ela apresenta as \
+tres despesas operacionais separadamente, abaixo do custo de receita. Este \
+binding soma as tres, com sign=+1 em cada:
+
+    SellingAndMarketingExpense        marketing
+    ResearchAndDevelopmentExpense     technology and development
+    GeneralAndAdministrativeExpense   general and administrative
+
+Somar linhas publicadas e diferente de estimar um total: as tres sao exatamente \
+o que a companhia apresenta entre o custo e o resultado operacional, e a \
+identidade fecha ATE O ULTIMO DIGITO nos dois exercicios conferidos:
+
+  FY2024  39.000.966 - 21.038.464 - 2.917.554 - 2.925.295 - 1.702.039
+        = 10.417.614  = `OperatingIncomeLoss` publicado
+  FY2023  33.723.297 - 19.715.368 - 2.657.883 - 2.675.758 - 1.720.285
+        = 6.954.003   = `OperatingIncomeLoss` publicado
+
+Fechar exatamente e o que autoriza `fidelity = "exact"` aqui. Se sobrasse \
+residual, o honesto seria `approximate` com `divergence_note`.
+
+`ResearchAndDevelopmentExpense` carrega o que a Netflix chama de "technology \
+and development" - o rotulo do emissor difere do nome do elemento, e e por isso \
+que `label_as_reported` existe e que a busca nunca e por rotulo.
+"""
+[[binding.line]]
+element   = "SellingAndMarketingExpense"
+statement = "income"
+sign      = 1
+label_as_reported = "Marketing"
+[[binding.line]]
+element   = "ResearchAndDevelopmentExpense"
+statement = "income"
+sign      = 1
+label_as_reported = "Technology and development"
+[[binding.line]]
+element   = "GeneralAndAdministrativeExpense"
+statement = "income"
+sign      = 1
+label_as_reported = "General and administrative"
+
+# ---------------------------------------------------------------------------
+# Resultado operacional
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "ebit_reported"
+fidelity   = "exact"
+equivalence_basis = """
+`OperatingIncomeLoss` e o resultado operacional como a Netflix o apresenta, \
+antes do resultado financeiro e dos tributos. E exatamente `ebit_reported`, e \
+segue a decisao A1: o que a companhia poe acima da linha operacional fica \
+dentro.
+
+A Netflix nao tem equivalencia patrimonial relevante, entao a ressalva que \
+domina o caso do GPA nao se aplica aqui - o que nao muda a definicao, so o \
+tamanho do efeito.
+
+Conferido: FY2023 US$ 6.954,0 MM, FY2024 US$ 10.417,6 MM.
+"""
+[[binding.line]]
+element   = "OperatingIncomeLoss"
+statement = "income"
+sign      = 1
+label_as_reported = "Operating income"
+
+# ---------------------------------------------------------------------------
+# Resultado atribuivel a controladora
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "net_income_controlling"
+fidelity   = "exact"
+equivalence_basis = """
+`NetIncomeLoss` e, no us-gaap, o resultado ATRIBUIVEL AOS SOCIOS DA \
+CONTROLADORA - a armadilha de nomenclatura ja registrada no mapeamento da \
+Intel. O total, incluindo nao controladores, seria `ProfitLoss`, e a decisao A3 \
+mantem os dois separados sem fallback automatico.
+
+A Netflix nao tem participacao de nao controladores material, entao os dois \
+coincidem na pratica. Isso NAO e razao para relaxar a regra: coincidir hoje e \
+diferente de ser a mesma coisa, e uma aquisicao futura separaria os dois sem \
+avisar ninguem.
+
+Conferido: FY2023 US$ 5.408,0 MM, FY2024 US$ 8.712,0 MM.
+"""
+[[binding.line]]
+element   = "NetIncomeLoss"
+statement = "income"
+sign      = 1
+label_as_reported = "Net income"
+
+# ---------------------------------------------------------------------------
+# O QUE NAO ESTA LIGADO, E POR QUE
+# ---------------------------------------------------------------------------
+#
+# gross_profit
+# ------------
+# A Netflix NAO publica `GrossProfit` como linha anual. Ela vai do custo de
+# receita direto para as despesas operacionais. Derivar receita - custo aqui
+# daria o numero certo e seria a coisa errada: `gross_profit` e um conceito
+# REPORTADO, e o motor tem uma decomposicao propria (`gross_profit_by_line`)
+# para quem quiser a derivacao. Ligar um conceito reportado a uma conta que
+# ninguem reportou apagaria a distincao entre ler e calcular.
+#
+# Consequencia aceita: `gross_profit_by_line@v1` e `ebit_by_stage@v1` recusam
+# para a Netflix, com motivo nomeado. `ebit_by_line@v1` funciona, porque ela
+# nao precisa de lucro bruto.
+#
+# d_and_a_pnl  -- LEIA ISTO ANTES DE LIGAR
+# ---------------------------------------
+# A Netflix publica `DepreciationDepletionAndAmortization`: US$ 328,9 MM em
+# FY2024. E tentador ligar, e seria o erro mais caro deste arquivo.
+#
+# Esse numero e SO a depreciacao de imobilizado. A amortizacao de conteudo -
+# que em FY2024 passa de US$ 14 bilhoes e e de longe a maior despesa da
+# companhia - e reportada dentro de `CostOfRevenue`, e o elemento que a isola
+# vive na taxonomia CUSTOMIZADA da propria Netflix (`nflx:`), que o ingestor
+# nao le: `_TAXONOMIAS` em `parse/sec_xbrl.py` cobre `us-gaap` e `ifrs-full`.
+#
+# Ligar `d_and_a_pnl` a esses 328,9 MM produziria um `ebitda@v1` de cerca de
+# US$ 10,7 bi para uma companhia cuja principal despesa nao-caixa foi
+# ignorada. O numero sairia com `fidelity = exact`, porque a linha existe e
+# esta certa - e estaria descrevendo outra empresa.
+#
+# Por isso o binding NAO existe. `ebitda@v1` e `d_and_a@v1` devolvem
+# `MetricUnavailable` nomeando `d_and_a_pnl` como o conceito que faltou. E a
+# regra do projeto aplicada onde ela custa: insumo ausente nunca vira zero,
+# nunca vira parcial, e nunca vira um numero plausivel.
+#
+# O que destravaria: ler a taxonomia `nflx:` no ingestor, ou usar o Financial
+# Statement Data Set (DERA), que traz a linha de amortizacao de conteudo. As
+# duas sao mudanca de engenharia, e nenhuma se resolve neste arquivo.
+#
+# segmentos
+# ---------
+# A Netflix reporta receita por REGIAO (UCAN, EMEA, LATAM, APAC), e nao por
+# segmento de negocio - ela declara um unico segmento operacional. O eixo
+# `BusinessSegments` de `revenue_by_segment@v1` nao se aplica; um eixo
+# geografico seria outra decomposicao, com outro nome e outra versao.

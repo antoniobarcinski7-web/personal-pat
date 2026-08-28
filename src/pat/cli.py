@@ -130,6 +130,11 @@ def cmd_fetch(args) -> int:
     params: dict[str, str] = {}
     if args.year:
         params["year"] = args.year
+    if getattr(args, "cik", None):
+        # O provider e quem normaliza para dez digitos. Faze-lo aqui deixaria
+        # duas normalizacoes do mesmo identificador, e um zero a esquerda
+        # perdido num dos dois lados nao apareceria ate a chave logica divergir.
+        params["cik"] = args.cik
 
     store, catalog, conn = _open(args)
     registry = Registry()
@@ -250,6 +255,14 @@ def cmd_build(args) -> int:
     migrate(conn)
     bronze = BronzeStore(paths.bronze)
 
+    # O despacho e por dataset, e nao por flag: `--cik` num dataset da CVM e
+    # um erro de digitacao, nao um modo. Ramificar aqui mantem os dois
+    # caminhos com a mesma cara para quem digita, e separados por dentro.
+    from pat.build_sec import SUPPORTED_SEC_DATASETS
+
+    if args.dataset in SUPPORTED_SEC_DATASETS:
+        return _build_sec(args, conn=conn, bronze=bronze)
+
     years = None
     if args.year:
         years = [str(y) for y in CVMProvider._parse_years(args.year, CVMProvider.DFP_MIN_YEAR)]
@@ -292,6 +305,67 @@ def cmd_build(args) -> int:
         return 0
     except BuildError as exc:
         print(f"erro de build: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        catalog.finish_run(run.run_id, status, datetime.now(UTC))
+        conn.close()
+
+
+def _build_sec(args, *, conn, bronze) -> int:
+    """O build americano. Mesma forma de saida do brasileiro, de proposito.
+
+    Quem ja sabe ler `[2024] a1b2c3  silver +N  gold +M` le esta linha sem
+    aprender nada novo - e a simetria e o que lembra que os dois caminhos
+    produzem o mesmo `Fact`, na mesma tabela.
+    """
+    from pat.build import BuildError
+    from pat.build_sec import build_sec_dataset
+
+    run = new_run(command=f"build {args.dataset} cik={args.cik}")
+    catalog = Catalog(conn)
+    catalog.start_run(run)
+
+    status = RunStatus.FAILED
+    try:
+        outcome = build_sec_dataset(
+            dataset_id=args.dataset,
+            conn=conn,
+            bronze=bronze,
+            run=run,
+            ciks=list(args.cik) if args.cik else None,
+        )
+        for resource in outcome.resources:
+            r = resource.result
+            print(
+                f"[{resource.resource_key}] {resource.content_sha256[:12]}  "
+                f"silver +{r.silver_written:,}  gold +{r.gold_written:,}  "
+                f"entidades +{r.entities_written}"
+            )
+            descartes = {
+                "sem_periodo": r.skipped_no_period,
+                "nao_monetario": r.skipped_non_monetary,
+                "projetado": r.skipped_forward_looking,
+            }
+            # Descarte NAO e ruido: `nao_monetario` sao as unidades que o
+            # filtro de leitura deixou de fora, e `projetado` sao fatos com
+            # periodo no futuro. Some-los faria o operador achar que o
+            # companyfacts tem menos do que tem.
+            visiveis = {k: v for k, v in descartes.items() if v}
+            if visiveis:
+                print(f"           descartadas: {visiveis}")
+        print(
+            f"\ngold total {gold.count(conn):,} fatos · "
+            f"descartadas neste build {outcome.skipped_total:,}"
+        )
+        status = RunStatus.SUCCEEDED
+        return 0
+    except BuildError as exc:
+        print(f"erro de build: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        # `parse_companyfacts` levanta quando o layout da origem muda. Isso e
+        # informacao sobre a FONTE, e merece sair diferente de um erro de uso.
+        print(f"layout inesperado na origem: {exc}", file=sys.stderr)
         return 1
     finally:
         catalog.finish_run(run.run_id, status, datetime.now(UTC))
@@ -2287,8 +2361,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("sources", help="lista providers e datasets").set_defaults(func=cmd_sources)
 
     p_fetch = sub.add_parser("fetch", help="ingere um dataset para o bronze")
-    p_fetch.add_argument("dataset", help="ex. cvm.dfp, cvm.itr, cvm.cad_cia_aberta")
+    p_fetch.add_argument(
+        "dataset", help="ex. cvm.dfp, cvm.itr, cvm.cad_cia_aberta, sec.companyfacts"
+    )
     p_fetch.add_argument("--year", help="2024, 2020-2024 ou 2020,2022")
+    p_fetch.add_argument(
+        "--cik",
+        help="companhia americana (SEC), com ou sem zeros a esquerda; "
+        "exige PAT_SEC_USER_AGENT",
+    )
     p_fetch.set_defaults(func=cmd_fetch)
 
     sub.add_parser("status", help="estatisticas do bronze").set_defaults(func=cmd_status)
@@ -2310,6 +2391,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         action="append",
         help="materializa so estas companhias; repetivel. Base do fluxo por projeto.",
+    )
+    p_build.add_argument(
+        "--cik",
+        action="append",
+        help="companhia americana; repetivel. Sem ele, constroi tudo que ja "
+        "foi baixado do dataset",
     )
     p_build.set_defaults(func=cmd_build)
 

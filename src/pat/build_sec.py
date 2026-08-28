@@ -32,7 +32,7 @@ lugar seria inventar uma distincao que o regime nao faz.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 import duckdb
@@ -42,12 +42,20 @@ from pat.contracts.entities import Company, EntityIdentity
 from pat.contracts.facts import Fact
 from pat.contracts.lineage import Lineage, Run
 from pat.contracts.silver import XbrlFactLine
-from pat.parse.sec_xbrl import EXTRACTOR, EXTRACTOR_VERSION
+from pat.parse.sec_xbrl import EXTRACTOR, EXTRACTOR_VERSION, parse_companyfacts
 from pat.store import entity as entity_store
 from pat.store import silver
 from pat.store.gold import GoldFact
 
-__all__ = ["SecBuildReport", "build_facts_from_xbrl", "write_sec_facts"]
+__all__ = [
+    "SUPPORTED_SEC_DATASETS",
+    "SecBuildOutcome",
+    "SecBuildReport",
+    "SecResourceReport",
+    "build_facts_from_xbrl",
+    "build_sec_dataset",
+    "write_sec_facts",
+]
 
 TAXONOMY_STATEMENT = "us-gaap"
 
@@ -227,3 +235,106 @@ def _identities_from(lines: list[XbrlFactLine]) -> list[EntityIdentity]:
             is_primary=True,
         )
     return list(vistos.values())
+
+
+# ---------------------------------------------------------------------------
+# A orquestracao: bronze -> silver -> gold, por companhia
+# ---------------------------------------------------------------------------
+
+SUPPORTED_SEC_DATASETS = frozenset({"sec.companyfacts"})
+"""Datasets que o build americano consome hoje.
+
+`sec.financial_statements` (DERA) tem parser proprio - `parse_dera_num` - e
+entra por outro caminho: um ZIP trimestral traz milhares de companhias, e nao
+uma. `sec.filing_doc` continua sem consumidor, porque e corpus e nao fato, e o
+extrator ainda nao le HTML. Listar aqui so o que de fato funciona e o que
+impede a CLI de aceitar um dataset e falhar tres camadas adiante.
+"""
+
+
+@dataclass
+class SecResourceReport:
+    """Uma companhia construida: o que entrou e o que foi descartado."""
+
+    resource_key: str
+    content_sha256: str
+    result: SecBuildReport
+
+
+@dataclass
+class SecBuildOutcome:
+    dataset_id: str
+    resources: list[SecResourceReport] = field(default_factory=list)
+
+    @property
+    def silver_written(self) -> int:
+        return sum(r.result.silver_written for r in self.resources)
+
+    @property
+    def gold_written(self) -> int:
+        return sum(r.result.gold_written for r in self.resources)
+
+    @property
+    def skipped_total(self) -> int:
+        return sum(
+            r.result.skipped_no_period
+            + r.result.skipped_non_monetary
+            + r.result.skipped_forward_looking
+            for r in self.resources
+        )
+
+
+def build_sec_dataset(
+    *,
+    dataset_id: str,
+    conn: duckdb.DuckDBPyConnection,
+    bronze,
+    run: Run,
+    ciks: list[str] | None = None,
+) -> SecBuildOutcome:
+    """Bronze -> gold para companhias americanas. Deterministico, sem rede.
+
+    Espelha `build.build_dataset` de proposito, ate no formato do relatorio: o
+    operador que ja sabe ler a saida do build brasileiro le esta sem aprender
+    nada novo, e a simetria e o que lembra que os dois caminhos produzem o
+    MESMO `Fact`, na mesma tabela.
+
+    `ciks` sao `resource_key` do bronze - CIK com dez digitos, e o zero a
+    esquerda importa. Sem eles, constroi tudo que ja foi baixado, que e o
+    comportamento util depois de varios `fetch`.
+    """
+    from pat.build import BuildError, documents_for
+
+    if dataset_id not in SUPPORTED_SEC_DATASETS:
+        raise BuildError(
+            f"dataset {dataset_id!r} nao suportado no build americano. "
+            f"Suportados: {', '.join(sorted(SUPPORTED_SEC_DATASETS))}"
+        )
+
+    chaves = [str(c).zfill(10) for c in ciks] if ciks else None
+    documentos = documents_for(conn, dataset_id, chaves)
+    if not documentos:
+        raise BuildError(
+            f"nenhum documento de {dataset_id} no bronze"
+            + (f" para {chaves}" if chaves else "")
+            + ". Rode `pat fetch sec.companyfacts --cik N` primeiro."
+        )
+
+    outcome = SecBuildOutcome(dataset_id=dataset_id)
+    for resource_key, content_sha256, retrieval_id, _storage_path in documentos:
+        content = bronze.read(content_sha256)  # verifica o hash ao ler
+
+        linhas = parse_companyfacts(
+            content,
+            content_sha256=content_sha256,
+            retrieval_id=retrieval_id,
+            extraction_run_id=run.run_id,
+        )
+        outcome.resources.append(
+            SecResourceReport(
+                resource_key=resource_key,
+                content_sha256=content_sha256,
+                result=write_sec_facts(conn, linhas, run=run),
+            )
+        )
+    return outcome

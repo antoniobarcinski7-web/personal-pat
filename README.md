@@ -523,9 +523,24 @@ funcionam evidência e hipótese, e os limites do agente — está em
 
 ```bash
 export PAT_SEC_USER_AGENT="Seu Nome (seu@email)"   # a SEC exige contato; 403 sem ele
-pat company --cik 50863
+pat fetch sec.companyfacts --cik 1065280           # bronze
+pat build sec.companyfacts --cik 1065280           # silver -> gold
+pat company --cik 1065280
 pat decompose revenue_by_segment@v1 --cik 50863 --from 2023-12-31 --to 2024-12-31 --as-of 2026-06-30
 ```
+
+O par `fetch` + `build` é o mesmo do lado brasileiro, com `--cik` no lugar de
+`--year`: os dois caminhos produzem o **mesmo** `Fact`, na mesma tabela, e o
+relatório de build tem o mesmo formato de propósito — quem já sabe ler um lê o
+outro sem aprender nada novo.
+
+Depois do build, a companhia existe mas ainda não tem mapeamento: `pat company`
+a mostra em `DRAFT`, com `[FAMILIA DEFAULT]` e os conceitos não ligados. **Não
+há família us-gaap**, e isso é deliberado — a CVM padroniza o plano de contas,
+o us-gaap não. Netflix e Intel escolhem elementos diferentes para as mesmas
+linhas (`Revenues` contra `RevenueFromContractWithCustomerExcludingAssessedTax`,
+`CostOfRevenue` contra `CostOfGoodsAndServicesSold`), e nenhum casamento por
+semelhança acertaria as duas. Cada emissor americano ganha o seu TOML.
 
 **Nenhum conceito, métrica ou decomposição mudou para o regime americano
 existir.** `ebitda@v1` foi escrita pensando na CVM e roda sobre a Intel sem uma
@@ -541,6 +556,50 @@ fictício desde a Fase 2.
 
 No mesmo motor, na mesma execução: Petrobras FY2024 em 204.234 MM BRL, regime
 `ifrs_cpc_br/BR`.
+
+### Netflix, e a métrica que o sistema se recusa a calcular
+
+O segundo mapeamento americano (`mappings/us/netflix.toml`) existe em boa parte
+para mostrar o que acontece quando a linha certa não está disponível.
+
+| | Netflix FY2023 | Netflix FY2024 |
+|---|---|---|
+| receita_liquida@v1 | 33.723,3 MM USD | 39.001,0 MM USD |
+| ebit@v1 | 6.954,0 MM USD | 10.417,6 MM USD |
+| lucro_liquido@v1 | 5.408,0 MM USD | 8.712,0 MM USD |
+| **ebitda@v1** | **INDISPONÍVEL** | **INDISPONÍVEL** |
+
+A Netflix publica `DepreciationDepletionAndAmortization`: 328,9 MM USD em
+FY2024. Ligá-lo a `d_and_a_pnl` daria um EBITDA de ~10,7 bi com `fidelity =
+exact` — e estaria descrevendo outra empresa, porque a amortização de conteúdo,
+acima de 14 bi e de longe a maior despesa da companhia, está dentro de
+`CostOfRevenue` e o elemento que a isola vive na taxonomia customizada `nflx:`,
+que o ingestor não lê.
+
+Então o binding **não existe**, e a métrica recusa nomeando o conceito que
+faltou:
+
+```
+ebitda@v1: INDISPONIVEL
+  motivo   dependency_unavailable
+  depende de d_and_a@v1: o mapeamento us:cik:0001065280 nao liga 'd_and_a_pnl'
+  saida    adicione um [[binding]] de d_and_a_pnl ao mapeamento
+```
+
+É a regra "insumo ausente nunca vira zero, nunca vira parcial" aplicada onde ela
+custa: o número plausível estava a uma linha de distância.
+
+O que **fecha** é a decomposição, com residual zero — a Netflix não publica
+`OperatingExpenses` como total, e o mapeamento soma as três linhas que ela
+publica:
+
+```
+$ pat decompose ebit_by_line@v1 --cik 1065280 --from 2023-12-31 --to 2024-12-31 --as-of 2025-06-30
+Receita liquida              33.723.297.000  →  39.000.966.000   +5.277.669.000   152,4%
+Custo dos bens e servicos    19.715.368.000  →  21.038.464.000   −1.323.096.000   −38,2%
+Despesas operacionais         7.053.926.000  →   7.544.888.000     −490.962.000   −14,2%
+RESIDUAL (nao explicado)                                                       0     0,0%
+```
 
 ### A entidade é universal; o identificador é local
 
