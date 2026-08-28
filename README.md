@@ -6,7 +6,7 @@ Inspirado na arquitetura pública do PAT (Bridgewater / AIA Labs): pipeline modu
 que espelha o fluxo de um analista, com estágios inspecionáveis e o LLM produzindo
 *código*, nunca números.
 
-**Estado atual: Fase 5 concluida (M5.1–M5.6).** Espinha dorsal de dados (bronze →
+**Estado atual: Fase 5 concluida (M5.1–M5.6) + camada Opportunity (O0–O11).** Espinha dorsal de dados (bronze →
 silver → gold, consulta `AS OF`), camada semântica (conceitos universais,
 mapeamentos por regime, métricas versionadas), camada de pesquisa completa
 (plano declarativo → validação → resolução → execução → renderização → resposta
@@ -24,6 +24,12 @@ us-gaap e decomposição por segmento operacional.
 O objetivo da Fase 5 é o **Company Research Workspace**: uma empresa por vez,
 combinando evidência quantitativa e qualitativa para responder não só "quanto
 foi" mas "por quê".
+
+Em cima disso vive a camada **Opportunity** (L5): a memória de uma
+investigação — o que foi perguntado, o que ficou aberto, o que foi suposto, o
+que foi refutado e por que alguém mudou de ideia. O PAT continua não sendo um
+chatbot; o Opportunity é uma camada acima dele, e a conversa é a porta dessa
+camada, não o lugar onde as coisas acontecem. Ver **[docs/opportunity.md](docs/opportunity.md)**.
 
 ---
 
@@ -395,6 +401,121 @@ O servidor é `http.server` da biblioteca padrão, escuta só em `127.0.0.1`, n�
 tem autenticação e não deve ser exposto. O log das sessões fica em `data/chat/`
 e é conveniência de UI: apagá-lo não perde nada auditável, porque a auditoria
 mora em `research_run` e `llm_call`.
+
+---
+
+## Opportunity (L5) — a memória da investigação
+
+```bash
+pat opportunity init --cod-cvm 14826 --as-of 2026-06-30 \
+    --mandate "o resultado operacional se sustenta sem equivalência patrimonial?"
+pat opportunity chat "Investiga a margem e a receita."
+pat opportunity chat "Acho que o moat é escala."
+pat opportunity critic          # sai com 1 se houver achado DURO
+```
+
+    PAT          motor de pesquisa determinístico. Produz número.
+    Opportunity  parceiro de pesquisa. Não produz número nenhum.
+
+Um workspace é **um arquivo**: `data/opportunity/<id>/journal.jsonl`,
+append-only. O estado corrente é sempre `fold(eventos)` — função pura, sem I/O.
+Não existe arquivo de estado ao lado do diário: ele seria uma segunda fonte de
+verdade, e no dia em que divergisse ninguém saberia qual das duas está certa.
+
+Disso saem três propriedades que não são detalhe de implementação:
+
+- **Reabrir é exato.** O estado redobrado do disco é igual campo a campo ao que
+  estava em memória — verificado com `model_dump()` em `test_end_to_end.py`.
+- **Não existe sessão de conversa.** O índice do turno vem da dobra. "Continuar
+  de onde parei ontem" é a mesma operação que "abrir o workspace".
+- **Nada é editado.** Uma tese que muda de LONG para NO_POSITION é a informação
+  mais valiosa que o diário guarda; sobrescrever a apagaria.
+
+### As sete palavras que o sistema não confunde
+
+Fato, evidência, hipótese, premissa, claim, conclusão, tese. Quase todo erro
+caro nesse tipo de sistema é uma dessas se passando por outra, e três das
+separações são **de tipo**, não de convenção:
+
+- `EvidenceLink` não tem `text` nem `value` — carrega endereço. Não dá para
+  colar um número de release dentro de uma evidência.
+- `Finding` não tem `value`, `unit` nem `currency`. Um achado aponta para
+  `result_ids`; ele não guarda o número.
+- `Assumption` e `DataPoint` são tipos distintos, e `Assumption` rejeita
+  `Actor.ENGINE`: o motor produz número, nunca escolha. Um valor escolhido não
+  entra na conta pela porta dos dados.
+
+Sua afirmação vira **hipótese**, nunca claim. Claim exige evidência; uma
+afirmação do analista é o começo de uma investigação, não o fim — e
+transformá-la em claim faria a convicção de quem digita entrar no sistema com a
+mesma força de um número calculado.
+
+### O ciclo, sem framework de agente
+
+    UNDERSTAND -> PLAN -> RESEARCH -> ANALYZE -> TEST -> CRITICIZE -> UPDATE -> NEXT
+
+Cada fase é uma função com nome, e o laço é um `for` sobre tarefas prontas. O
+valor do desenho está em poder abrir o relatório e ver o que foi perguntado, o
+que voltou, o que foi interpretado e o que foi **barrado**; um framework
+esconderia justamente isso.
+
+RESEARCH é determinístico — só fala com a mesa de ferramentas, e nenhum número
+nasce ali. TEST é mecânico: toda citação de uma interpretação tem que estar no
+que os passos daquela tarefa produziram, e uma frase que cita um ID inexistente
+é barrada **e registrada** (`RejectedFinding`). Descartá-la em silêncio
+esconderia que o interpretador cita o que não existe — alucinação de
+procedência, pior que a de conteúdo porque passa por verificada.
+
+O raciocinador default (`ShapeReasoner`) não chama modelo nenhum: planeja por
+tabela declarada e interpreta por *forma* de série, nunca por causa. Isso é o
+piso, e não uma versão reduzida — a suíte inteira testa o laço de verdade, e a
+fronteira entre trabalho-de-regra e trabalho-de-modelo fica visível.
+
+### O agente pode discordar de você
+
+`USER_ASSERTION_CONTRADICTED` é um achado duro, e é o que autoriza o agente a
+dizer "eu não seguiria com essa hipótese como está". Ele só aparece quando há
+contra-evidência registrada apontando para o contrário do que o analista
+afirmou, e carrega os endereços dela. Discordar sem evidência não é ceticismo —
+é outra opinião, e o sistema não tem por que ter opinião. A decisão de manter a
+hipótese mesmo assim continua sendo sua, e fica no diário como sua.
+
+O crítico também **devolve tarefas**, em prioridade alta. Um crítico que só
+aponta produz um relatório que alguém lê, concorda e arquiva; testar o que
+derrubaria a tese é mais urgente que somar mais uma evidência a favor — a
+segunda só muda a confiança, a primeira muda a conclusão.
+
+### Valuation: sem uma premissa default
+
+DADO, PREMISSA, CÁLCULO e INTERPRETAÇÃO ficam separados. Falta uma premissa?
+`ValuationUnavailable` dizendo qual. **Não há default** — um default seria uma
+escolha de investimento embutida na biblioteca. O modelo vai para o diário; o
+resultado não, porque é recomputável e guardar os dois criaria uma segunda
+verdade.
+
+`terminal_share` sai junto do valor: acima de ~0,75 o modelo está dizendo mais
+sobre a premissa terminal do que sobre a companhia. A grade de sensibilidade
+reexecuta o modelo por célula em vez de interpolar — as bordas são onde a tese
+quebra, e é onde a aproximação erra mais.
+
+### A camada não tem jurisdição
+
+A mesma investigação roda para Brasil e Estados Unidos pelo mesmo código.
+`PatTools` nem sequer aceita `entity_id` como parâmetro, o que torna resolução
+cross-jurisdiction **inexpressível** em vez de proibida por convenção, e
+`tests/opportunity/test_layering_opportunity.py` falha se alguém escrever
+`cvm`, `sec`, `cik` ou `cd_conta` na camada — comentário incluído.
+
+O que não é igual é a cobertura, e o sistema diz isso:
+`USDocumentProvider.discover()` devolve `ProviderUnavailable` com remédio,
+nunca `()`. Lista vazia seria uma afirmação sobre o **mundo** ("a companhia não
+comenta as próprias margens"); o fato é sobre o **sistema**. Na prática, uma
+investigação sobre companhia americana hoje sustenta hipóteses em métrica do
+motor, não em evidência textual.
+
+O guia completo — como iniciar, como conversar, como ler o status, como
+funcionam evidência e hipótese, e os limites do agente — está em
+**[docs/opportunity.md](docs/opportunity.md)**.
 
 ---
 

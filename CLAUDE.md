@@ -242,3 +242,70 @@ URL, validação de parâmetro) e deixe só a verificação de layout em `-m net
   Instale sempre com `--locked`. Evite frameworks de agente: o valor do desenho está
   no pipeline explícito e inspecionável, e frameworks escondem exatamente o que
   precisa ser auditado.
+
+## A camada Opportunity (L5)
+
+`src/pat/opportunity/` é a memória de uma investigação; `src/pat/` é o motor.
+O guia de uso está em `docs/opportunity.md`. O que não é óbvio a partir do
+código:
+
+1. **O diário é a única fonte de verdade.** Um workspace é um `journal.jsonl`
+   append-only, e o estado é `fold(eventos)` — pura, sem I/O. Nunca acrescente
+   um arquivo de estado ao lado: no dia em que ele divergir do diário, ninguém
+   saberá qual das duas está certa. `Workspace.apply()` dobra **antes** de
+   escrever, para que um evento que a dobra recusa nunca chegue ao disco.
+
+2. **Corpo de evento novo exige tratador na dobra.** `_HANDLERS` em `state.py`
+   é comparado com `typing.get_args(EventBody)` por
+   `test_todo_corpo_de_evento_tem_tratador`. Sem isso, o corpo novo viraria
+   evento que o replay ignora em silêncio — perda de estado que só aparece
+   semanas depois, como uma hipótese que "sumiu".
+
+3. **A dobra recusa o impossível, não o ruim.** Evento antes da criação,
+   `as_of` para trás, tarefa inexistente, slug repetido: recusados. Achado sem
+   âncora, hipótese sem falsificador, conclusão mal sustentada: aceitos, e
+   trabalho do crítico. Uma investigação passa por estados ruins no caminho.
+
+4. **A camada não tem jurisdição.** `tests/opportunity/
+   test_layering_opportunity.py` proíbe `cvm`, `sec`, `cod_cvm`, `cik`,
+   `cd_conta` e afins dentro de `pat/opportunity/`, comentários inclusive. Três
+   exceções declaradas (`company.py`, `providers.py`, `tools.py`), cada uma com
+   um teste que confere que ela continua estreita. A CLI mora **fora** da
+   camada (`src/pat/cli_opportunity.py`) — é raiz de composição, e essa é a
+   saída certa em vez de uma quarta exceção.
+
+5. **`PatTools` está preso a uma empresa.** Nenhum método aceita `entity_id`.
+   Resolução cross-jurisdiction é inexpressível, e não proibida por convenção —
+   e o teste verifica isso por introspecção de assinatura, não por
+   comportamento.
+
+6. **Sete palavras, sete tipos.** Fato, evidência, hipótese, premissa, claim,
+   conclusão, tese. Três separações são de tipo e não podem ser afrouxadas:
+   `EvidenceLink` sem `text`/`value`, `Finding` sem `value`/`unit`/`currency`,
+   e `Assumption` distinto de `DataPoint` (com `Actor.ENGINE` rejeitado). É o
+   mesmo desenho de `QuoteClaim` na Fase 5: a garantia é de tipo.
+
+7. **Afirmação do usuário vira hipótese, nunca claim.** Claim exige evidência.
+   Este é o ponto por onde a convicção de quem digita entraria no sistema com a
+   mesma força de um número calculado.
+
+8. **Citação inventada é barrada E registrada.** `_verify` em `research.py`
+   confere que todo ID citado saiu de um passo daquela tarefa. O barrado vira
+   `FindingRecorded` sem citação — que é exatamente o que ele é. Descartar em
+   silêncio esconderia que o raciocinador cita o que não existe.
+
+9. **O crítico não muda estado.** Ele lê a dobra e devolve objeções mais
+   `TaskProposal`s. Corrigir a partir da crítica seria o laço
+   `crítico → autor → crítico`, que é um amostrador que uma hora aprova algo
+   errado — mesma razão pela qual o critic da Fase 3 também não corrige.
+
+10. **Valuation não tem default.** `REQUIRED_ASSUMPTIONS` faltando vira
+    `ValuationUnavailable` nomeando qual. Um default seria uma escolha de
+    investimento embutida na biblioteca. O modelo vai para o diário; o
+    resultado não, porque é recomputável.
+
+11. **A conversa é casca fina.** `chat.py` classifica por tabela declarada e
+    delega — não pesquisa, não critica, não calcula. Um `chat.py` que cresce é
+    um agente cujo comportamento só existe dentro de uma frase, e que não dá
+    para testar sem falar com ele. Se uma capacidade nova precisar aparecer na
+    conversa, ela nasce na camada de baixo e ganha um despacho aqui.
