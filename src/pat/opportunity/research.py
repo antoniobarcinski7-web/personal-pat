@@ -254,12 +254,33 @@ def _metric_ref_id(ref: str, resultado: MetricResult) -> str:
 
 
 def _shape_em_prosa(forma) -> str | None:
-    if forma.direction is None or forma.magnitude is None:
+    """A forma da serie, dita inteira - inclusive quando ela nao e uma linha.
+
+    Uma serie que vai e volta descrita so pelas pontas produz uma frase certa
+    na aritmetica e errada no que importa. O caso que motivou isto e o EBIT do
+    GPA: -565 MM, +660 MM, -436 MM. Comparar as pontas dava "subiu", e o ano do
+    meio - o unico positivo dos tres - sumia da frase.
+    """
+    if forma.direction is None:
         return None
-    return (
-        f"{forma.direction.value} / {forma.magnitude.value} entre "
-        f"{forma.first_period.isoformat()} e {forma.last_period.isoformat()}"
+
+    partes = [forma.direction.value]
+    if forma.magnitude is not None:
+        partes.append(f"/ {forma.magnitude.value}")
+    partes.append(
+        f"entre {forma.first_period.isoformat()} e {forma.last_period.isoformat()}"
     )
+    if forma.reversals:
+        partes.append(
+            f"- NAO MONOTONICA, {forma.reversals} reversao(oes) no caminho: as "
+            "pontas nao contam a serie"
+        )
+    if forma.crosses_zero:
+        partes.append(
+            "- a serie troca de sinal, entao nao ha variacao percentual que se "
+            "possa ler"
+        )
+    return " ".join(partes)
 
 
 def _step_breakdown(tools: PatTools, step: StepRequest) -> StepOutcome:

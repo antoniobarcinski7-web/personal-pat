@@ -156,6 +156,25 @@ class SeriesShape:
     first_period: date | None
     last_period: date | None
     points: int
+    reversals: int = 0
+    """Quantas vezes a serie mudou de sentido no caminho.
+
+    Existe porque comparar so as pontas descreve `-565, +660, -436` como
+    "subiu". A aritmetica esta certa e a frase esta errada: o ano do meio e a
+    coisa mais importante dessa serie, e uma forma que o esconde e o analogo
+    textual do numero aproximado que se apresenta como exato."""
+
+    crosses_zero: bool = False
+    """A serie trocou de sinal em algum ponto.
+
+    Quando isso acontece, variacao percentual sobre a base deixa de ser uma
+    grandeza que alguem possa ler: 22% de melhora sobre um EBIT negativo nao e
+    22% de nada. A magnitude vira `None` - ausencia declarada, nunca um numero
+    que engana."""
+
+    @property
+    def is_monotonic(self) -> bool:
+        return self.reversals == 0
 
 
 def series_shape(pares: list[tuple[date, Decimal]]) -> SeriesShape:
@@ -169,19 +188,52 @@ def series_shape(pares: list[tuple[date, Decimal]]) -> SeriesShape:
         return SeriesShape(None, None, None, None, None, len(pares))
     ordenados = sorted(pares, key=lambda p: p[0])
     (primeiro_p, primeiro_v), (ultimo_p, ultimo_v) = ordenados[0], ordenados[-1]
+    reversoes = _reversals([v for _, v in ordenados])
+    troca_de_sinal = _crosses_zero([v for _, v in ordenados])
+
     if primeiro_v == 0:
         # Base zero nao tem variacao relativa. Devolver `None` e o certo:
         # inventar "infinito" ou "100%" daria uma magnitude que nao existe.
-        return SeriesShape(None, None, None, primeiro_p, ultimo_p, len(ordenados))
+        return SeriesShape(
+            None, None, None, primeiro_p, ultimo_p, len(ordenados),
+            reversals=reversoes, crosses_zero=troca_de_sinal,
+        )
+
     relativo = (ultimo_v - primeiro_v) / abs(primeiro_v)
     return SeriesShape(
         direction=_direction(relativo),
-        magnitude=_magnitude(relativo),
+        # Sinal trocado no caminho anula a magnitude, e nao o sentido. "Menos
+        # negativo" continua sendo uma direcao que se pode afirmar; "22% maior"
+        # sobre uma base negativa nao e uma grandeza que alguem possa ler.
+        magnitude=None if troca_de_sinal else _magnitude(relativo),
         relative=relativo,
         first_period=primeiro_p,
         last_period=ultimo_p,
         points=len(ordenados),
+        reversals=reversoes,
+        crosses_zero=troca_de_sinal,
     )
+
+
+def _reversals(valores: list[Decimal]) -> int:
+    """Quantas vezes o sentido de variacao mudou entre pontos consecutivos.
+
+    Diferencas nulas sao ignoradas: um ano de lado no meio de uma subida nao e
+    uma reversao, e conta-lo como uma faria toda serie longa parecer
+    acidentada.
+    """
+    sentidos = [
+        1 if depois > antes else -1
+        for antes, depois in zip(valores, valores[1:], strict=False)
+        if depois != antes
+    ]
+    return sum(1 for a, b in zip(sentidos, sentidos[1:], strict=False) if a != b)
+
+
+def _crosses_zero(valores: list[Decimal]) -> bool:
+    positivos = any(v > 0 for v in valores)
+    negativos = any(v < 0 for v in valores)
+    return positivos and negativos
 
 
 def _direction(relativo: Decimal) -> Direction:

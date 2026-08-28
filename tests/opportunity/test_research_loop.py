@@ -383,3 +383,89 @@ def test_o_raciocinador_deterministico_nao_explica_causa(ws, tools):
         baixo = finding.text.lower()
         for causal in (" porque ", " devido ", " por conta ", " gracas a "):
             assert causal not in baixo, f"o achado {finding.text!r} afirma causa"
+
+
+# -- a serie que vai e volta ------------------------------------------------
+
+
+def test_serie_nao_monotonica_nao_e_descrita_pelas_pontas():
+    """O EBIT real do GPA: -565 MM, +660 MM, -436 MM.
+
+    Comparar so as pontas dava "up / large" - aritmeticamente certo e errado
+    sobre o que aconteceu. O ano do meio e o unico positivo dos tres, e uma
+    forma que o esconde e o analogo textual do numero aproximado que se
+    apresenta como exato.
+    """
+    from decimal import Decimal
+
+    forma = series_shape(
+        [
+            (date(2022, 12, 31), Decimal("-565000000")),
+            (date(2023, 12, 31), Decimal("660000000")),
+            (date(2024, 12, 31), Decimal("-436000000")),
+        ]
+    )
+
+    assert forma.reversals == 1
+    assert not forma.is_monotonic
+    assert forma.crosses_zero
+    # Direcao sobrevive - "menos negativo" e afirmavel. Magnitude nao: 22% de
+    # melhora sobre um EBIT negativo nao e 22% de nada.
+    assert forma.direction is not None
+    assert forma.magnitude is None
+
+
+def test_serie_monotonica_continua_simples():
+    """A checagem nova nao pode fazer toda serie parecer acidentada."""
+    from decimal import Decimal
+
+    forma = series_shape(
+        [
+            (date(2022, 12, 31), Decimal("100")),
+            (date(2023, 12, 31), Decimal("110")),
+            (date(2024, 12, 31), Decimal("130")),
+        ]
+    )
+
+    assert forma.is_monotonic
+    assert not forma.crosses_zero
+    assert forma.magnitude is not None
+
+
+def test_um_ano_de_lado_no_meio_nao_e_reversao():
+    """Diferenca nula nao muda o sentido; conta-la faria toda serie longa
+    parecer acidentada."""
+    from decimal import Decimal
+
+    forma = series_shape(
+        [
+            (date(2022, 12, 31), Decimal("100")),
+            (date(2023, 12, 31), Decimal("100")),
+            (date(2024, 12, 31), Decimal("130")),
+        ]
+    )
+
+    assert forma.is_monotonic
+
+
+def test_a_prosa_avisa_que_as_pontas_nao_contam_a_serie(ws, tools):
+    """O aviso tem que chegar ao relatorio, e nao so ao objeto.
+
+    Uma forma que sabe da reversao e uma frase que nao a menciona deixa o
+    problema exatamente onde ele estava.
+    """
+    from pat.opportunity.research import _shape_em_prosa
+
+    from decimal import Decimal
+
+    forma = series_shape(
+        [
+            (date(2022, 12, 31), Decimal("-565000000")),
+            (date(2023, 12, 31), Decimal("660000000")),
+            (date(2024, 12, 31), Decimal("-436000000")),
+        ]
+    )
+    prosa = _shape_em_prosa(forma)
+
+    assert "NAO MONOTONICA" in prosa
+    assert "troca de sinal" in prosa
