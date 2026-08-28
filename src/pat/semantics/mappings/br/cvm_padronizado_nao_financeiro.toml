@@ -176,3 +176,108 @@ statement = "DRE"
 cd_conta  = "3.11.01"
 sign      = 1
 label_as_reported = "Atribuído a Sócios da Empresa Controladora"
+
+# ---------------------------------------------------------------------------
+# Balanco e caixa
+#
+# Tres bindings, e o que NAO esta aqui importa tanto quanto o que esta.
+#
+# Arrendamento nao entra na familia: o plano padronizado reserva 2.01.04.03
+# ("Financiamento por Arrendamento") para ele, mas as companhias nao o usam de
+# forma consistente - o GPA publica 0,0 ali e poe 451 MM em 2.01.05.02.17,
+# dentro de "Outras Obrigacoes". Uma familia que apontasse para 2.01.04.03
+# devolveria zero com fidelity=exact, que e pior do que recusar. Companhia que
+# quiser `divida_bruta_com_arrendamento@v1` declara o endereco no mapeamento
+# proprio.
+#
+# Capex tambem nao: a DFC padronizada da CVM nao normaliza o codigo do
+# desembolso com imobilizado - ele vive em 6.02.xx com numeracao livre por
+# companhia. Casar por rotulo ("Aquisicao de imobilizado") seria exatamente o
+# que este projeto recusa.
+# ---------------------------------------------------------------------------
+
+[[binding]]
+concept_id = "cash_and_equivalents"
+fidelity   = "exact"
+equivalence_basis = """
+1.01.01 e "Caixa e Equivalentes de Caixa" no plano padronizado - a mesma \
+fronteira de tres meses do conceito, definida pelo proprio regime. Positivo na \
+origem; sign=+1.
+
+Nao inclui 1.01.02 ("Aplicacoes Financeiras"), que e `short_term_investments`. \
+No GPA em 2024-12-31 a diferenca e pequena (2.631 MM contra 15 MM), e em outras \
+companhias nao e.
+"""
+[[binding.line]]
+statement = "BPA"
+cd_conta  = "1.01.01"
+sign      = 1
+label_as_reported = "Caixa e Equivalentes de Caixa"
+
+[[binding]]
+concept_id = "short_term_investments"
+fidelity   = "exact"
+equivalence_basis = """
+1.01.02 e "Aplicacoes Financeiras" no ativo circulante - aplicacoes que a \
+companhia nao classificou como equivalente de caixa. Positivo na origem.
+"""
+[[binding.line]]
+statement = "BPA"
+cd_conta  = "1.01.02"
+sign      = 1
+label_as_reported = "Aplicações Financeiras"
+
+[[binding]]
+concept_id = "debt_current"
+fidelity   = "exact"
+equivalence_basis = """
+2.01.04 e "Emprestimos e Financiamentos" no passivo circulante: divida onerosa \
+com vencimento em ate doze meses, incluindo debentures (2.01.04.02). Publicado \
+positivo no plano da CVM - passivo e apresentado em modulo -, ja na convencao \
+do conceito. Sign=+1.
+
+Fornecedores (2.01.02), obrigacoes fiscais (2.01.03) e trabalhistas (2.01.01) \
+ficam de fora: sao passivo operacional, e inclui-los faria toda companhia com \
+prazo de fornecedor longo parecer alavancada.
+
+Conferido no GPA em 2024-12-31: 849 MM.
+"""
+[[binding.line]]
+statement = "BPP"
+cd_conta  = "2.01.04"
+sign      = 1
+label_as_reported = "Empréstimos e Financiamentos"
+
+[[binding]]
+concept_id = "debt_noncurrent"
+fidelity   = "exact"
+equivalence_basis = """
+2.02.01, o espelho de 2.01.04 no passivo nao circulante.
+
+Conferido no GPA em 2024-12-31: 3.196 MM. Divida bruta resultante: 4.045 MM.
+"""
+[[binding.line]]
+statement = "BPP"
+cd_conta  = "2.02.01"
+sign      = 1
+label_as_reported = "Empréstimos e Financiamentos"
+
+[[binding]]
+concept_id = "cash_flow_operating"
+fidelity   = "exact"
+equivalence_basis = """
+6.01 e "Caixa Liquido Atividades Operacionais" na DFC pelo metodo indireto - o \
+total da secao, publicado POSITIVO quando gera caixa, ja na convencao do \
+conceito.
+
+O codigo e o mesmo na DFC_MI (indireta) e na DFC_MD (direta), e por isso o \
+binding nao precisa saber qual das duas a companhia publicou.
+
+Conferido no GPA em FY2024: 1.363 MM.
+"""
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta  = "6.01"
+sign      = 1
+label_as_reported = "Caixa Líquido Atividades Operacionais"
+

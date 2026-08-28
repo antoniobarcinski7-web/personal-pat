@@ -76,6 +76,10 @@ class ZipSpec:
     documents: list[DocumentSpec] = field(default_factory=list)
     dre_con: list[LineSpec] = field(default_factory=list)
     bpa_con: list[LineSpec] = field(default_factory=list)
+    bpp_con: list[LineSpec] = field(default_factory=list)
+    """Passivo consolidado. Simetrico de `bpa_con`, e instantaneo como ele:
+    conta patrimonial nao tem `DT_INI_EXERC`, e e essa ausencia que faz o
+    parser produzir `PeriodType.INSTANT`."""
     dmpl_con: list[LineSpec] = field(default_factory=list)
     flow_members: dict[tuple[str, str], list[LineSpec]] = field(default_factory=dict)
     """Demonstracoes de fluxo arbitrarias, por (statement, 'con'|'ind').
@@ -126,13 +130,15 @@ def build_dfp_zip(spec: ZipSpec) -> bytes:
                 _csv(FLOW_COLUMNS, [_flow_row(l, dt_refer_default) for l in spec.dre_con]),
             )
 
-        if spec.bpa_con:
+        for nome, linhas in (("BPA", spec.bpa_con), ("BPP", spec.bpp_con)):
+            if not linhas:
+                continue
             rows = []
-            for line in spec.bpa_con:
+            for line in linhas:
                 row = _flow_row(line, dt_refer_default)
                 del row[9]  # remove DT_INI_EXERC
                 rows.append(row)
-            zf.writestr(f"dfp_cia_aberta_BPA_con_{spec.year}.csv", _csv(INSTANT_COLUMNS, rows))
+            zf.writestr(f"dfp_cia_aberta_{nome}_con_{spec.year}.csv", _csv(INSTANT_COLUMNS, rows))
 
         for (statement, scope), lines in sorted(spec.flow_members.items()):
             if not lines:

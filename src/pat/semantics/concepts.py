@@ -30,6 +30,18 @@ D_AND_A_PNL = "d_and_a_pnl"
 D_AND_A_RETAINED = "d_and_a_retained"
 NET_INCOME_CONTROLLING = "net_income_controlling"
 
+# Balanco e caixa. Sao os conceitos que faltavam para sair da DRE - sem eles
+# nenhuma pergunta sobre solvencia, geracao de caixa ou alocacao de capital
+# tem como ser respondida, por mais dado que se ingira.
+CASH_AND_EQUIVALENTS = "cash_and_equivalents"
+SHORT_TERM_INVESTMENTS = "short_term_investments"
+DEBT_CURRENT = "debt_current"
+DEBT_NONCURRENT = "debt_noncurrent"
+LEASE_LIABILITY_CURRENT = "lease_liability_current"
+LEASE_LIABILITY_NONCURRENT = "lease_liability_noncurrent"
+CASH_FLOW_OPERATING = "cash_flow_operating"
+CAPEX = "capex"
+
 
 _CATALOG: tuple[Concept, ...] = (
     Concept(
@@ -168,6 +180,157 @@ _CATALOG: tuple[Concept, ...] = (
             "disciplina de `ebit_reported`, que inclui equivalencia patrimonial.",
             "Nao e EBIT nem EBITDA: aqueles param antes do resultado financeiro e "
             "dos tributos, e substituir um pelo outro muda a pergunta.",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # Balanco: saldos pontuais (PeriodKind.STOCK)
+    # -----------------------------------------------------------------------
+    Concept(
+        concept_id=CASH_AND_EQUIVALENTS,
+        label_en="Cash and cash equivalents",
+        definition=(
+            "Caixa, depositos a vista e aplicacoes de liquidez imediata com "
+            "vencimento original de ate tres meses e risco insignificante de "
+            "mudanca de valor."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = saldo disponivel",
+        boundary_notes=(
+            "NAO inclui aplicacoes financeiras de prazo maior: aquilo e "
+            "`short_term_investments`, conceito separado. Os dois juntos sao uma "
+            "posicao de liquidez, e somar por conta propria seria escolher uma "
+            "definicao de caixa que a companhia nao escolheu.",
+            "O criterio de tres meses e do proprio regime contabil, e por isso a "
+            "linha pode ser lida direto: quem decide o que e equivalente e o "
+            "emissor, nao este catalogo.",
+        ),
+    ),
+    Concept(
+        concept_id=SHORT_TERM_INVESTMENTS,
+        label_en="Short-term investments",
+        definition=(
+            "Aplicacoes financeiras classificadas no ativo circulante que NAO "
+            "atendem ao criterio de equivalente de caixa."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = saldo aplicado",
+        boundary_notes=(
+            "Separado de `cash_and_equivalents` de proposito. Uma divida liquida "
+            "que abate aplicacoes e uma metrica DIFERENTE de uma que abate so "
+            "caixa, e as duas circulam com o mesmo nome no mercado. Manter os "
+            "conceitos separados e o que permite as duas existirem sem que uma "
+            "se disfarce da outra.",
+        ),
+    ),
+    Concept(
+        concept_id=DEBT_CURRENT,
+        label_en="Current debt",
+        definition=(
+            "Emprestimos, financiamentos e titulos de divida com vencimento em ate "
+            "doze meses, ou classificados no passivo circulante."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = obrigacao",
+        boundary_notes=(
+            "Divida ONEROSA: obrigacao contratual de pagar principal e juros. "
+            "Fornecedores, obrigacoes fiscais e trabalhistas ficam fora - sao "
+            "passivo operacional, e inclui-los tornaria toda companhia com bom "
+            "capital de giro artificialmente alavancada.",
+            "Arrendamento fica FORA, por decisao A4. Ele e `lease_liability_current`, "
+            "e a metrica que o inclui diz no nome que o inclui.",
+        ),
+    ),
+    Concept(
+        concept_id=DEBT_NONCURRENT,
+        label_en="Non-current debt",
+        definition=(
+            "Emprestimos, financiamentos e titulos de divida com vencimento acima "
+            "de doze meses, ou classificados no passivo nao circulante."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = obrigacao",
+        boundary_notes=(
+            "Mesma fronteira de `debt_current`: onerosa, e sem arrendamento.",
+        ),
+    ),
+    Concept(
+        concept_id=LEASE_LIABILITY_CURRENT,
+        label_en="Current lease liability",
+        definition=(
+            "Passivo de arrendamento com vencimento em ate doze meses, reconhecido "
+            "no balanco pelo regime de arrendamentos vigente."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = obrigacao",
+        boundary_notes=(
+            "Existe como conceito PROPRIO por causa da decisao A4: o arrendamento "
+            "entra na divida bruta explicitamente ou nao entra, e nunca por "
+            "normalizacao silenciosa. Companhias de varejo e de midia mudam de "
+            "faixa de alavancagem inteira dependendo dessa escolha.",
+        ),
+    ),
+    Concept(
+        concept_id=LEASE_LIABILITY_NONCURRENT,
+        label_en="Non-current lease liability",
+        definition=(
+            "Passivo de arrendamento com vencimento acima de doze meses, "
+            "reconhecido no balanco pelo regime de arrendamentos vigente."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = obrigacao",
+    ),
+    # -----------------------------------------------------------------------
+    # Fluxo de caixa
+    # -----------------------------------------------------------------------
+    Concept(
+        concept_id=CASH_FLOW_OPERATING,
+        label_en="Net cash provided by operating activities",
+        definition=(
+            "Caixa liquido gerado (ou consumido) pelas atividades operacionais no "
+            "periodo, como apresentado na demonstracao dos fluxos de caixa."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = entrada de caixa",
+        boundary_notes=(
+            "A convencao de sinal aqui e o oposto da de despesa, e a inversao e a "
+            "fonte de erro mais provavel num mapeamento novo: um consumo de caixa "
+            "e NEGATIVO. Regime que publique com sinal invertido normaliza no "
+            "`sign` do binding, nunca aqui.",
+            "E o total DEPOIS de juros e impostos pagos, quando a companhia os "
+            "classifica em operacional. A classificacao e escolha do emissor "
+            "dentro do regime, e reclassificar seria refazer a demonstracao.",
+        ),
+    ),
+    Concept(
+        concept_id=CAPEX,
+        label_en="Capital expenditure",
+        definition=(
+            "Caixa desembolsado na aquisicao de imobilizado e intangivel no "
+            "periodo, como apresentado nas atividades de investimento."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = saida de caixa",
+        boundary_notes=(
+            "POSITIVO = saida, ao contrario de `cash_flow_operating`. A escolha e "
+            "deliberada: capex e uma grandeza que se soma e se compara em modulo, "
+            "e uma convencao negativa faria toda formula que o usa carregar um "
+            "sinal de menos que ninguem lembra de conferir. O regime que publica "
+            "negativo normaliza com sign=-1 no binding.",
+            "NAO inclui aquisicao de participacoes societarias nem investimento "
+            "financeiro: aquilo e alocacao de capital de outra natureza, e "
+            "misturar produziria um capex que nao se compara com depreciacao.",
+            "Conteudo audiovisual capitalizado e caso de fronteira REAL e nao "
+            "resolvido aqui: em alguns emissores ele e ativo intangivel e em "
+            "outros e custo de receita. Onde a distincao importar, o mapeamento "
+            "declara o que entrou, com `divergence_note`.",
         ),
     ),
 )

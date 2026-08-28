@@ -13,16 +13,40 @@ arquivo esquecido numa metrica fantasma.
 from __future__ import annotations
 
 from pat.semantics.definitions import (
+    caixa_e_equivalentes,
+    capex,
     d_and_a,
+    divida_bruta,
+    divida_bruta_com_arrendamento,
+    divida_liquida,
     ebit,
     ebitda,
+    fcf,
+    fluxo_de_caixa_operacional,
     lucro_liquido,
     margem_ebitda,
     receita_liquida,
 )
 from pat.semantics.registry import MetricRegistry
 
-MODULES = (receita_liquida, ebit, d_and_a, ebitda, margem_ebitda, lucro_liquido)
+MODULES = (
+    # DRE
+    receita_liquida,
+    ebit,
+    d_and_a,
+    ebitda,
+    margem_ebitda,
+    lucro_liquido,
+    # Balanco
+    caixa_e_equivalentes,
+    divida_bruta,
+    divida_bruta_com_arrendamento,
+    divida_liquida,
+    # Fluxo de caixa
+    fluxo_de_caixa_operacional,
+    capex,
+    fcf,
+)
 
 
 def register_all(registry: MetricRegistry) -> MetricRegistry:

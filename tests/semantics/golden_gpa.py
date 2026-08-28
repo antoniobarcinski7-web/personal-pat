@@ -94,6 +94,24 @@ _DVA_2024 = [
 _DFC_2024 = [
     _line("6.01.01.04", "Depreciação / amortização", "1167000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
     _line("6.01.01.04", "Depreciação / amortização", "1136000", "2023-12-31", "2023-01-01", "PENÚLTIMO"),
+    # O total da secao operacional, insumo de `cash_flow_operating`.
+    _line("6.01", "Caixa Líquido Atividades Operacionais", "1363000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+]
+
+# --- Balanco, FY2024 --------------------------------------------------------
+#
+# Contas patrimoniais sao INSTANTANEAS. `_line` recebe `period_start` porque a
+# assinatura e uma so, e o construtor do ZIP remove a coluna DT_INI_EXERC das
+# demonstracoes de saldo - e essa ausencia que faz o parser produzir
+# `PeriodType.INSTANT`, em vez de um campo dizendo "sou saldo".
+
+_BPA_2024 = [
+    _line("1.01.01", "Caixa e Equivalentes de Caixa", "2631000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    _line("1.01.02", "Aplicações Financeiras", "15000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+]
+_BPP_2024 = [
+    _line("2.01.04", "Empréstimos e Financiamentos", "849000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    _line("2.02.01", "Empréstimos e Financiamentos", "3196000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
 ]
 
 
@@ -119,6 +137,8 @@ def zips() -> dict[int, bytes]:
                                  cod_cvm=COD_CVM, denom=DENOM)
                 ],
                 dre_con=_DRE_2024,
+                bpa_con=_BPA_2024,
+                bpp_con=_BPP_2024,
                 flow_members={("DVA", "con"): _DVA_2024, ("DFC_MI", "con"): _DFC_2024},
             )
         ),

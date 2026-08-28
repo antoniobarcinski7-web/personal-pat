@@ -108,12 +108,22 @@ def test_registro_embutido_e_valido():
     registry = default_registry()
     nomes = {str(m.ref) for m in registry.all()}
     assert nomes == {
+        # DRE
         "receita_liquida@v1",
         "ebit@v1",
         "d_and_a@v1",
         "ebitda@v1",
         "margem_ebitda@v1",
         "lucro_liquido@v1",
+        # Balanco
+        "caixa_e_equivalentes@v1",
+        "divida_bruta@v1",
+        "divida_bruta_com_arrendamento@v1",
+        "divida_liquida@v1",
+        # Fluxo de caixa
+        "fluxo_de_caixa_operacional@v1",
+        "capex@v1",
+        "fcf@v1",
     }
 
 

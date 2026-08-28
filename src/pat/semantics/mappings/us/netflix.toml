@@ -177,6 +177,172 @@ sign      = 1
 label_as_reported = "Net income"
 
 # ---------------------------------------------------------------------------
+# Balanco
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "cash_and_equivalents"
+fidelity   = "exact"
+equivalence_basis = """
+`CashAndCashEquivalentsAtCarryingValue` e a linha de caixa e equivalentes do \
+balanco, pelo valor contabil. Saldo pontual, `PeriodType.INSTANT`.
+
+Conferido: 2023-12-31 US$ 7.116,9 MM, 2024-12-31 US$ 7.804,7 MM.
+
+NAO inclui `ShortTermInvestments` (US$ 21,0 MM em 2023 e US$ 1.779,0 MM em \
+2024). O salto entre os dois anos e justamente por que os conceitos sao \
+separados: somar produziria uma serie de caixa que sobe 2,6x quando a companhia \
+so mudou onde aplicou o dinheiro.
+"""
+[[binding.line]]
+element   = "CashAndCashEquivalentsAtCarryingValue"
+statement = "balance"
+sign      = 1
+label_as_reported = "Cash and cash equivalents"
+
+[[binding]]
+concept_id = "short_term_investments"
+fidelity   = "exact"
+equivalence_basis = """
+`ShortTermInvestments` e a linha de aplicacoes financeiras do ativo circulante \
+que nao atende ao criterio de equivalente de caixa.
+
+Conferido: 2023-12-31 US$ 21,0 MM, 2024-12-31 US$ 1.779,0 MM.
+"""
+[[binding.line]]
+element   = "ShortTermInvestments"
+statement = "balance"
+sign      = 1
+label_as_reported = "Short-term investments"
+
+[[binding]]
+concept_id = "debt_current"
+fidelity   = "exact"
+equivalence_basis = """
+A Netflix NAO usa `LongTermDebtCurrent` nem `DebtCurrent` para a parcela \
+circulante da divida - ela usa `ShortTermBorrowings`. Mais um elemento onde a \
+escolha e do emissor e nenhuma deducao acertaria.
+
+Conferido: 2023-12-31 US$ 399,8 MM, 2024-12-31 US$ 1.784,5 MM. O salto e real - \
+sao os notes com vencimento em 2025 reclassificados para o circulante.
+
+Divida ONEROSA, sem arrendamento: o passivo de arrendamento tem binding proprio \
+em `lease_liability_current`, conforme a decisao A4.
+"""
+[[binding.line]]
+element   = "ShortTermBorrowings"
+statement = "balance"
+sign      = 1
+label_as_reported = "Short-term debt"
+
+[[binding]]
+concept_id = "debt_noncurrent"
+fidelity   = "exact"
+equivalence_basis = """
+`LongTermDebtNoncurrent` e a divida de longo prazo, liquida de custos de \
+emissao. A Netflix tambem publica `LongTermDebt` em alguns periodos - aquele e \
+o TOTAL, e usa-lo aqui contaria a parcela circulante duas vezes quando somada a \
+`debt_current`.
+
+Conferido: 2023-12-31 US$ 14.143,4 MM, 2024-12-31 US$ 13.798,4 MM.
+
+Divida bruta resultante: 14.543,3 MM em 2023 e 15.582,8 MM em 2024, que batem \
+com o total de divida do 10-K.
+"""
+[[binding.line]]
+element   = "LongTermDebtNoncurrent"
+statement = "balance"
+sign      = 1
+label_as_reported = "Long-term debt"
+
+# ---------------------------------------------------------------------------
+# Arrendamento (decisao A4: explicito, nunca embutido)
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "lease_liability_current"
+fidelity   = "exact"
+equivalence_basis = """
+`OperatingLeaseLiabilityCurrent`. So arrendamento OPERACIONAL - a Netflix nao \
+publica passivo de arrendamento financeiro material.
+
+Conferido: 2023-12-31 US$ 383,3 MM, 2024-12-31 US$ 428,5 MM.
+"""
+[[binding.line]]
+element   = "OperatingLeaseLiabilityCurrent"
+statement = "balance"
+sign      = 1
+label_as_reported = "Current content liabilities / operating lease"
+
+[[binding]]
+concept_id = "lease_liability_noncurrent"
+fidelity   = "exact"
+equivalence_basis = """
+`OperatingLeaseLiabilityNoncurrent`.
+
+Conferido: 2023-12-31 US$ 2.046,8 MM, 2024-12-31 US$ 1.983,7 MM.
+
+Com arrendamento, a divida bruta de 2024 sobe de 15.582,8 para 17.995,0 MM - \
+15% a mais. E o tamanho do efeito que a decisao A4 existe para nao esconder.
+"""
+[[binding.line]]
+element   = "OperatingLeaseLiabilityNoncurrent"
+statement = "balance"
+sign      = 1
+label_as_reported = "Operating lease liabilities"
+
+# ---------------------------------------------------------------------------
+# Fluxo de caixa
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "cash_flow_operating"
+fidelity   = "exact"
+equivalence_basis = """
+`NetCashProvidedByUsedInOperatingActivities` e o caixa liquido das atividades \
+operacionais, publicado POSITIVO quando gera caixa - a mesma convencao do \
+conceito. Sign=+1.
+
+Conferido: FY2023 US$ 7.274,3 MM, FY2024 US$ 7.361,4 MM.
+"""
+[[binding.line]]
+element   = "NetCashProvidedByUsedInOperatingActivities"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Net cash provided by operating activities"
+
+[[binding]]
+concept_id = "capex"
+fidelity   = "partial"
+divergence_note = """
+Este capex e SO imobilizado - US$ 439,5 MM em FY2024 - e NAO inclui o \
+investimento em conteudo, que na Netflix e a alocacao de capital que decide a \
+companhia (mais de US$ 17 bilhoes no exercicio).
+
+A razao e a mesma de `d_and_a_pnl`: a Netflix classifica o gasto com conteudo \
+dentro das atividades OPERACIONAIS, nao das de investimento, e o elemento que o \
+isola (`AdditionsToContentAssets` e parentes) vive na taxonomia customizada \
+`nflx:`, que o ingestor nao le.
+
+Consequencia direta e declarada: `fcf@v1` para a Netflix ja esta LIQUIDO do \
+gasto com conteudo, porque o conteudo saiu dentro do caixa operacional. O \
+numero e util e nao e comparavel com o FCF de uma companhia que capitaliza \
+conteudo como investimento. Quem comparar precisa saber disso, e e por isso que \
+a fidelidade e `partial` e nao `exact`: a marca sobe pelo grafo ate o \
+`MetricResult`.
+"""
+equivalence_basis = """
+`PaymentsToAcquirePropertyPlantAndEquipment` e o desembolso com imobilizado nas \
+atividades de investimento. Publicado POSITIVO no companyfacts (a SEC usa \
+elemento de "payments", cujo sinal ja e de saida), e a convencao do conceito e \
+"positivo = saida de caixa". Sign=+1, sem inversao.
+
+Conferido: FY2023 US$ 348,6 MM, FY2024 US$ 439,5 MM.
+"""
+[[binding.line]]
+element   = "PaymentsToAcquirePropertyPlantAndEquipment"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Purchases of property and equipment"
+
+# ---------------------------------------------------------------------------
 # O QUE NAO ESTA LIGADO, E POR QUE
 # ---------------------------------------------------------------------------
 #
