@@ -42,6 +42,7 @@ from pat.contracts.opportunity import (
     AssumptionSet,
     Blocker,
     BlockerCleared,
+    ChatTurnRecorded,
     BlockerRecorded,
     Claim,
     ClaimAsserted,
@@ -121,6 +122,10 @@ class OpportunityState(Frozen):
     valuation_notes: tuple[ValuationInterpretation, ...] = ()
     theses: tuple[InvestmentThesis, ...] = ()
     notes: tuple[Note, ...] = ()
+    turns: tuple[ChatTurnRecorded, ...] = ()
+    """Os turnos de conversa, na ordem. O fio da conversa E o diario: nao ha
+    objeto de sessao em lugar nenhum, e por isso "continuar a sessao" e a
+    mesma operacao que "abrir o workspace"."""
 
     def thesis(self, slug: str) -> InvestmentThesis | None:
         """A versao CORRENTE da tese. As anteriores continuam no diario.
@@ -271,6 +276,7 @@ class _Builder:
     valuations: dict[str, ValuationModel] = field(default_factory=dict)
     valuation_notes: list[ValuationInterpretation] = field(default_factory=list)
     theses: dict[str, InvestmentThesis] = field(default_factory=dict)
+    turns: list[ChatTurnRecorded] = field(default_factory=list)
 
     def hypothesis(self, slug: str, ev: JournalEvent) -> _HypothesisBuilder:
         hipotese = self.hypotheses.get(slug)
@@ -320,6 +326,7 @@ class _Builder:
             valuation_notes=tuple(self.valuation_notes),
             theses=tuple(self.theses.values()),
             notes=tuple(self.notes),
+            turns=tuple(self.turns),
         )
 
 
@@ -673,6 +680,23 @@ def _on_thesis(b: _Builder, ev: JournalEvent, body: ThesisDrafted) -> None:
     b.theses[body.thesis.slug] = body.thesis
 
 
+# -- tratadores: conversa (O5) ----------------------------------------------
+
+
+def _on_chat_turn(b: _Builder, ev: JournalEvent, body: ChatTurnRecorded) -> None:
+    # O indice do turno vem da dobra, e nao de quem grava: dois processos
+    # falando com o mesmo workspace produziriam o mesmo indice se cada um
+    # contasse por conta propria, e a conversa passaria a ter dois turnos 3.
+    esperado = len(b.turns)
+    if body.turn_index != esperado:
+        raise FoldError(
+            f"workspace {b.workspace_id}: turno {body.turn_index} no seq {ev.seq}, "
+            f"quando o proximo seria {esperado}. Indice de turno e posicao na "
+            "conversa, nao um numero que quem grava escolhe."
+        )
+    b.turns.append(body)
+
+
 _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     # O0
     WorkspaceCreated: _on_created,
@@ -710,6 +734,8 @@ _HANDLERS: dict[type, Callable[[_Builder, JournalEvent, typing.Any], None]] = {
     ValuationInterpreted: _on_valuation_interpreted,
     # O9
     ThesisDrafted: _on_thesis,
+    # O5
+    ChatTurnRecorded: _on_chat_turn,
 }
 
 

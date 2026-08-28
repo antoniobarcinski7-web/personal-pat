@@ -42,6 +42,7 @@ from pat.contracts.opportunity.base import (
     WorkspaceCreated,
     WorkspaceReopened,
 )
+from pat.contracts.opportunity.chat import ChatTurnRecorded
 from pat.contracts.opportunity.critic import (
     AlternativeConsidered,
     FalsificationAttempted,
@@ -105,6 +106,8 @@ EventBody = (
     | ValuationInterpreted
     # O9
     | ThesisDrafted
+    # O5
+    | ChatTurnRecorded
 )
 
 

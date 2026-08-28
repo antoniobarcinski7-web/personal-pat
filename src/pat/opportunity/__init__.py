@@ -22,6 +22,7 @@ Montagem tipica:
 
 from __future__ import annotations
 
+from pat.opportunity.chat import ChatAgent, classify, respond
 from pat.opportunity.company import UnknownEntity, profile_for
 from pat.opportunity.critic import critique, falsification_agenda
 from pat.opportunity.documents import (
@@ -65,6 +66,9 @@ from pat.opportunity.tools import AccountLine, PatTools, ToolContext
 from pat.opportunity.valuation import implied_growth, run_dcf, sensitivity
 
 __all__ = [
+    "respond",
+    "classify",
+    "ChatAgent",
     "AccountLine",
     "AgendaRun",
     "BrazilDocumentProvider",

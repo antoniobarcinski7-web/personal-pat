@@ -70,6 +70,13 @@ from pat.contracts.opportunity.hypothesis import (
     HypothesisStatusChanged,
     HypothesisStrength,
 )
+from pat.contracts.opportunity.chat import (
+    ChatTurnRecorded,
+    Intent,
+    TurnAction,
+    TurnRequest,
+    TurnResponse,
+)
 from pat.contracts.opportunity.critic import (
     AlternativeConsidered,
     Critique,
@@ -108,6 +115,11 @@ from pat.contracts.opportunity.thesis import (
 from pat.contracts.opportunity.events import EVENT_BODIES, EventBody, JournalEvent
 
 __all__ = [
+    "TurnResponse",
+    "TurnRequest",
+    "TurnAction",
+    "Intent",
+    "ChatTurnRecorded",
     "Actor",
     "AgendaObjectiveSet",
     "AlternativeConsidered",
