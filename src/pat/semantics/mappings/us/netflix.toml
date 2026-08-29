@@ -314,19 +314,24 @@ fidelity   = "partial"
 divergence_note = """
 Este capex e SO imobilizado - US$ 439,5 MM em FY2024 - e NAO inclui o \
 investimento em conteudo, que na Netflix e a alocacao de capital que decide a \
-companhia (mais de US$ 17 bilhoes no exercicio).
+companhia: US$ 16.223,6 MM no mesmo exercicio, 37 vezes maior.
 
-A razao e a mesma de `d_and_a_pnl`: a Netflix classifica o gasto com conteudo \
-dentro das atividades OPERACIONAIS, nao das de investimento, e o elemento que o \
-isola (`AdditionsToContentAssets` e parentes) vive na taxonomia customizada \
-`nflx:`, que o ingestor nao le.
+A razao NAO e falta de dado, e isso mudou: \
+`nflx:AdditionstoStreamingContentAssets` esta no gold desde que \
+`parse_inline_xbrl` passou a ler o inline XBRL do 10-K. A razao e contabil.
 
-Consequencia direta e declarada: `fcf@v1` para a Netflix ja esta LIQUIDO do \
-gasto com conteudo, porque o conteudo saiu dentro do caixa operacional. O \
-numero e util e nao e comparavel com o FCF de uma companhia que capitaliza \
-conteudo como investimento. Quem comparar precisa saber disso, e e por isso que \
-a fidelidade e `partial` e nao `exact`: a marca sobe pelo grafo ate o \
-`MetricResult`.
+A Netflix classifica o gasto com conteudo nas atividades OPERACIONAIS, e nao \
+nas de investimento. Some-lo aqui faria `fcf@v1` - que e caixa operacional \
+menos capex - subtrair o conteudo DUAS vezes: uma dentro do caixa operacional, \
+onde ele ja esta, e outra como capex. O FCF sairia US$ 16 bilhoes menor do que \
+e.
+
+Consequencia declarada: `fcf@v1` para a Netflix ja esta LIQUIDO do gasto com \
+conteudo. O numero e util e NAO e comparavel com o FCF de uma companhia que \
+capitaliza conteudo como investimento - a diferenca nao esta no calculo, esta \
+em onde cada emissor classifica o mesmo desembolso. Por isso a fidelidade e \
+`partial`: a marca sobe pelo grafo ate o `MetricResult`, e quem comparar duas \
+companhias ve o aviso.
 """
 equivalence_basis = """
 `PaymentsToAcquirePropertyPlantAndEquipment` e o desembolso com imobilizado nas \
@@ -422,6 +427,54 @@ sign      = 1
 label_as_reported = "Income before income taxes"
 
 # ---------------------------------------------------------------------------
+# Depreciacao e amortizacao que passou pelo resultado
+#
+# Duas linhas, e a segunda e a companhia inteira.
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+A Netflix reconhece no resultado DUAS despesas de amortizacao/depreciacao de \
+naturezas diferentes, e este binding soma as duas:
+
+    DepreciationDepletionAndAmortization                     imobilizado
+    nflx:CostofServicesAmortizationofStreamingContentAssets  conteudo
+
+A segunda e a companhia. Em FY2024 sao US$ 15.301,5 MM contra US$ 328,9 MM da \
+primeira - 46 vezes maior. Ela e a maior despesa nao-caixa da Netflix, esta \
+DENTRO de `CostOfRevenue` na demonstracao, e e por construcao a parcela que \
+reduziu o resultado sem consumir caixa - que e exatamente a definicao de \
+`d_and_a_pnl`.
+
+POR QUE ISTO NAO EXISTIA ATE AGORA. O elemento e da taxonomia CUSTOMIZADA da \
+Netflix, e o endpoint `companyfacts` da SEC publica so taxonomias padrao - \
+`us-gaap`, `dei`, `srt`, `ecd`, `ffd`. Nao havia filtro a afrouxar: o dado nao \
+estava no JSON. Ele vive no inline XBRL do proprio 10-K, e passou a ser \
+legivel quando `parse_inline_xbrl` existiu.
+
+Enquanto nao existia, `ebitda@v1` RECUSAVA - e a recusa estava certa. Um \
+EBITDA montado so sobre os 328,9 MM de imobilizado teria saido com \
+`fidelity = exact` descrevendo outra empresa.
+
+Conferido:
+  FY2023  356,9 + 14.197,4 = 14.554,4 MM
+  FY2024  328,9 + 15.301,5 = 15.630,4 MM
+
+Os dois positivos na origem, ja na convencao do conceito; sign=+1 em cada.
+"""
+[[binding.line]]
+element   = "DepreciationDepletionAndAmortization"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Depreciation and amortization of property, equipment and intangibles"
+[[binding.line]]
+element   = "CostofServicesAmortizationofStreamingContentAssets"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Amortization of content assets"
+
+# ---------------------------------------------------------------------------
 # O QUE NAO ESTA LIGADO, E POR QUE
 # ---------------------------------------------------------------------------
 #
@@ -438,8 +491,12 @@ label_as_reported = "Income before income taxes"
 # para a Netflix, com motivo nomeado. `ebit_by_line@v1` funciona, porque ela
 # nao precisa de lucro bruto.
 #
-# d_and_a_pnl  -- LEIA ISTO ANTES DE LIGAR
-# ---------------------------------------
+# d_and_a_pnl  -- RESOLVIDO, historico mantido
+# --------------------------------------------
+# O que segue descreve por que este binding NAO existiu ate a leitura do inline
+# XBRL, e fica registrado porque o raciocinio continua valendo para o proximo
+# emissor cuja linha decisiva esteja numa taxonomia customizada.
+#
 # A Netflix publica `DepreciationDepletionAndAmortization`: US$ 328,9 MM em
 # FY2024. E tentador ligar, e seria o erro mais caro deste arquivo.
 #

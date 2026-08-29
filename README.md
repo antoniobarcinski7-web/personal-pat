@@ -685,6 +685,59 @@ evidências. O escopo passa a ser uma versão de extrator por documento.
 último item e não têm marcador próprio, então ficam rotuladas com o último item
 detectado. O documento não publica essa fronteira, e inventar uma seria pior.
 
+### Inline XBRL, e onde vivem os elementos do emissor
+
+O endpoint `companyfacts` da SEC publica **só taxonomias padrão** — `us-gaap`,
+`dei`, `srt`, `ecd`, `ffd`. Conferido no JSON real da Netflix: os elementos
+customizados dela não estão lá, e nenhum filtro de ingestão os traria, porque
+não há o que filtrar.
+
+Eles existem no próprio 10-K, como inline XBRL:
+
+```bash
+pat docs --cik 1065280 --sync --form 10-K   # o arquivamento vira corpus
+pat build sec.filing_doc --cik 1065280      # e vira fato
+```
+
+O arquivamento é **duas coisas ao mesmo tempo** — texto citável e fato — e os
+dois caminhos leem o mesmo blob do bronze sem se atrapalhar.
+
+O que um fato inline mostra e o que ele vale são coisas diferentes:
+
+```xml
+<ix:nonFraction name="nflx:CostofServices..." scale="3" sign="-"
+                decimals="-3" format="ixt:num-dot-decimal">16,422,166</ix:nonFraction>
+```
+
+Três transformações declaradas separam uma da outra: `format` diz qual
+caractere é o separador decimal, `scale` multiplica por 10ⁿ, `sign` nega.
+`decimals` **não** é escala — é precisão, e usá-lo como escala é o erro
+clássico de quem lê iXBRL pela primeira vez. Formato não declarado na tabela é
+**recusado e contado**, nunca chutado.
+
+### O EBITDA que a Netflix passou a ter
+
+`nflx:CostofServicesAmortizationofStreamingContentAssets`: **15.301,5 MM** em
+FY2024, contra 328,9 MM de imobilizado — 46 vezes maior. É a maior despesa
+não-caixa da companhia, e ela estava fora do alcance do sistema.
+
+| Netflix FY2024 | |
+|---|---|
+| ebit@v1 | 10.417,6 MM USD |
+| d_and_a@v1 | 15.630,4 MM USD |
+| **ebitda@v1** | **26.048,0 MM USD** |
+| margem_ebitda@v1 | 66,8% (era 63,2% em 2022) |
+
+Enquanto o dado não existia, `ebitda@v1` **recusava** — e a recusa estava
+certa. Um EBITDA montado só sobre os 328,9 MM de imobilizado teria saído com
+`fidelity = exact` descrevendo outra empresa.
+
+E o capex **continua** sem o conteúdo, agora por razão contábil e não por falta
+de dado: a Netflix classifica o gasto com conteúdo em atividades
+**operacionais**. Somá-lo ao capex faria `fcf@v1` subtraí-lo duas vezes — uma
+dentro do caixa operacional, outra como capex — e o FCF sairia 16 bilhões menor
+do que é.
+
 ### Netflix, e a métrica que o sistema se recusa a calcular
 
 O segundo mapeamento americano (`mappings/us/netflix.toml`) existe em boa parte

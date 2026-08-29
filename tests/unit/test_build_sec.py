@@ -251,10 +251,14 @@ def test_sem_bronze_a_recusa_ensina_o_comando(ambiente):
 
 
 def test_dataset_sem_consumidor_e_recusado_na_porta(ambiente):
-    """`sec.filing_doc` resolve URL e nao tem build. A recusa e aqui.
+    """Dataset sem build recusa na PORTA, e nao tres camadas adiante.
 
-    Aceitar e falhar tres camadas adiante mandaria o leitor procurar o
-    problema no parser.
+    Ate a N7 o exemplo era `sec.filing_doc`, que resolvia URL e nao tinha
+    consumidor. Ele passou a ter: o arquivamento e corpus E fato, e o inline
+    XBRL e onde vivem os elementos do proprio emissor. O exemplo passa a ser
+    `sec.financial_statements` - o ZIP trimestral da DERA, que tem parser
+    (`parse_dera_num`) e entra por outro caminho, porque traz milhares de
+    companhias e nao uma.
     """
     conn, bronze, catalog = ambiente
     run = new_run(command="teste")
@@ -262,9 +266,10 @@ def test_dataset_sem_consumidor_e_recusado_na_porta(ambiente):
 
     with pytest.raises(BuildError, match="nao suportado no build americano"):
         build_sec_dataset(
-            dataset_id="sec.filing_doc", conn=conn, bronze=bronze, run=run
+            dataset_id="sec.financial_statements", conn=conn, bronze=bronze, run=run
         )
-    assert "sec.filing_doc" not in SUPPORTED_SEC_DATASETS
+    assert "sec.financial_statements" not in SUPPORTED_SEC_DATASETS
+    assert "sec.filing_doc" in SUPPORTED_SEC_DATASETS
 
 
 def test_layout_mudado_na_origem_levanta_em_vez_de_gravar_vazio(ambiente):

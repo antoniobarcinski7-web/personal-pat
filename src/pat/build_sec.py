@@ -241,14 +241,22 @@ def _identities_from(lines: list[XbrlFactLine]) -> list[EntityIdentity]:
 # A orquestracao: bronze -> silver -> gold, por companhia
 # ---------------------------------------------------------------------------
 
-SUPPORTED_SEC_DATASETS = frozenset({"sec.companyfacts"})
+SUPPORTED_SEC_DATASETS = frozenset({"sec.companyfacts", "sec.filing_doc"})
 """Datasets que o build americano consome hoje.
+
+`sec.filing_doc` entrou porque o arquivamento e DUAS coisas ao mesmo tempo:
+corpus - texto citavel - e fato, no inline XBRL. Os dois caminhos leem o mesmo
+blob do bronze e nao se atrapalham: `pat docs --sync` extrai unidades,
+`pat build sec.filing_doc` extrai fatos.
+
+E onde vivem os elementos do EMISSOR. O endpoint `companyfacts` publica so
+taxonomias padrao, e a amortizacao de conteudo da Netflix - a maior despesa
+nao-caixa dela - nao esta la; esta no 10-K, como `nflx:`.
 
 `sec.financial_statements` (DERA) tem parser proprio - `parse_dera_num` - e
 entra por outro caminho: um ZIP trimestral traz milhares de companhias, e nao
-uma. `sec.filing_doc` continua sem consumidor, porque e corpus e nao fato, e o
-extrator ainda nao le HTML. Listar aqui so o que de fato funciona e o que
-impede a CLI de aceitar um dataset e falhar tres camadas adiante.
+uma. Listar aqui so o que de fato funciona e o que impede a CLI de aceitar um
+dataset e falhar tres camadas adiante.
 """
 
 
@@ -311,6 +319,9 @@ def build_sec_dataset(
             f"Suportados: {', '.join(sorted(SUPPORTED_SEC_DATASETS))}"
         )
 
+    if dataset_id == "sec.filing_doc":
+        return _build_inline(conn=conn, bronze=bronze, run=run, ciks=ciks)
+
     chaves = [str(c).zfill(10) for c in ciks] if ciks else None
     documentos = documents_for(conn, dataset_id, chaves)
     if not documentos:
@@ -338,3 +349,78 @@ def build_sec_dataset(
             )
         )
     return outcome
+
+
+def _build_inline(*, conn, bronze, run: Run, ciks: list[str] | None) -> SecBuildOutcome:
+    """Arquivamentos ja no corpus -> fatos do inline XBRL.
+
+    Le de `source_document`, e nao do catalogo do bronze: e la que estao a
+    forma, o accession e a data de entrega do documento, ja tipados. Reconstrui-
+    los a partir do `resource_key` seria uma segunda copia que pode divergir da
+    primeira.
+    """
+    from pat.build import BuildError
+    from pat.parse.sec_inline import parse_inline_xbrl
+
+    predicado = ""
+    params: list[object] = []
+    if ciks:
+        entidades = [f"us:cik:{str(c).zfill(10)}" for c in ciks]
+        predicado = f"AND d.entity_id IN ({', '.join('?' * len(entidades))})"
+        params = list(entidades)
+
+    documentos = conn.execute(
+        f"""
+        SELECT d.document_id, d.entity_id, d.origin_category, d.resource_key,
+               d.published_at, d.retrieval_id, d.title
+        FROM source_document d
+        WHERE d.provider_id = 'sec' {predicado}
+        ORDER BY d.published_at
+        """,
+        params,
+    ).fetchall()
+    if not documentos:
+        raise BuildError(
+            "nenhum arquivamento da SEC no corpus"
+            + (f" para {ciks}" if ciks else "")
+            + ". Rode `pat docs --cik N --sync` primeiro."
+        )
+
+    outcome = SecBuildOutcome(dataset_id="sec.filing_doc")
+    for doc_id, entity_id, forma, resource_key, publicado, retrieval_id, _titulo in documentos:
+        conteudo = bronze.read(doc_id)  # verifica o hash ao ler
+        accession = str(resource_key).split("/")[0]
+        linhas, _stats = parse_inline_xbrl(
+            conteudo,
+            content_sha256=doc_id,
+            retrieval_id=retrieval_id,
+            extraction_run_id=run.run_id,
+            cik=entity_id.rpartition(":")[2],
+            entity_name=_nome_da_entidade(conn, entity_id),
+            accession=accession,
+            form=str(forma),
+            filed=publicado,
+            source_member=str(resource_key),
+        )
+        outcome.resources.append(
+            SecResourceReport(
+                resource_key=str(resource_key),
+                content_sha256=doc_id,
+                result=write_sec_facts(conn, linhas, run=run),
+            )
+        )
+    return outcome
+
+
+def _nome_da_entidade(conn, entity_id: str) -> str:
+    """O nome ja gravado da entidade. Nao inventa um a partir do identificador.
+
+    O parser de inline XBRL nao le o nome da companhia - `dei:EntityRegistrant
+    Name` e um `ix:nonNumeric`, e este parser so le fatos numericos. Buscar o
+    nome ja conhecido e melhor que derivar `us:cik:0001065280` em algum rotulo:
+    o segundo apareceria no relatorio como se fosse a razao social.
+    """
+    from pat.query.asof import AsOf
+
+    ref = AsOf(conn).entity(entity_id)
+    return ref.display_name if ref is not None else entity_id
