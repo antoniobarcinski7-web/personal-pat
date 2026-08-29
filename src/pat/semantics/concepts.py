@@ -52,6 +52,13 @@ SHARE_REPURCHASES = "share_repurchases"
 INCOME_TAX_EXPENSE = "income_tax_expense"
 PRETAX_INCOME = "pretax_income"
 
+# Mercado e contagem de acoes. Os dois que faltavam para sair de 'quanto a
+# companhia vale por dentro' e chegar em 'e quanto o mercado esta pedindo
+# por ela' - a pergunta que separa analise de negocio de analise de
+# investimento.
+SHARE_PRICE = "share_price"
+SHARES_OUTSTANDING = "shares_outstanding"
+
 
 _CATALOG: tuple[Concept, ...] = (
     Concept(
@@ -440,6 +447,57 @@ _CATALOG: tuple[Concept, ...] = (
             "Existe para ser o denominador da aliquota efetiva. Nao e EBIT: "
             "aquele para antes do resultado financeiro, e usar um pelo outro "
             "produziria uma aliquota que nao se aplica a nada.",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # Mercado
+    # -----------------------------------------------------------------------
+    Concept(
+        concept_id=SHARE_PRICE,
+        label_en="Share price",
+        definition=(
+            "Preco de fechamento de uma acao da companhia na data-base, ajustado "
+            "por desdobramento e proventos."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = preco",
+        boundary_notes=(
+            "NAO e uma peca contabil. Ninguem o publicou como parte de um "
+            "relatorio, ele nao fecha com nada, e a procedencia dele e mais fraca "
+            "que a de todo o resto do catalogo - `PUBLIC_WEB`, e nao "
+            "`PRIMARY_OFFICIAL`. A marca viaja no retrieval e chega ao resultado.",
+            "AJUSTADO, e por isso ele muda retroativamente: o preco de 2023 lido "
+            "hoje nao e o preco de 2023 lido no ano passado, se houve "
+            "desdobramento no meio. Por isso o `knowledge_date` do fato e a data "
+            "da BUSCA, e nao a do pregao.",
+            "Dia sem pregao nao tem preco. O resolver olha para tras dentro de "
+            "uma janela declarada e devolve o pregao que de fato aconteceu - "
+            "nunca para frente, que seria vazamento de futuro.",
+        ),
+    ),
+    Concept(
+        concept_id=SHARES_OUTSTANDING,
+        label_en="Shares outstanding",
+        definition=(
+            "Quantidade de acoes em circulacao na data-base, como reportada pela "
+            "companhia."
+        ),
+        dimension=Dimension.COUNT,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = quantidade",
+        boundary_notes=(
+            "EM CIRCULACAO na data, e nao a media ponderada do periodo. A media "
+            "e o denominador do lucro por acao e e outra grandeza: ela suaviza "
+            "recompra e emissao ao longo do exercicio, e usa-la para valor de "
+            "mercado daria o valor de uma companhia que nao existe em data "
+            "nenhuma.",
+            "Nao e o capital autorizado nem o subscrito: aqueles sao limites e "
+            "compromissos, nao acoes que alguem detem.",
+            "Desdobramento muda esta contagem RETROATIVAMENTE nos arquivamentos "
+            "posteriores, e a consulta bitemporal e o que mantem as duas leituras "
+            "corretas: sob um `as_of` anterior ao desdobramento sai a contagem "
+            "antiga, porque era ela que se conhecia.",
         ),
     ),
 )

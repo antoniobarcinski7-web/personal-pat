@@ -685,6 +685,76 @@ evidências. O escopo passa a ser uma versão de extrator por documento.
 último item e não têm marcador próprio, então ficam rotuladas com o último item
 detectado. O documento não publica essa fronteira, e inventar uma seria pior.
 
+### Mercado, e a pergunta que separa negócio de investimento
+
+Nenhum regulador publica preço. Sem ele o sistema fazia análise de **negócio** —
+não havia múltiplo, e "o que o preço de hoje já está assumindo?" não tinha
+contra o que resolver.
+
+```bash
+pat fetch yahoo.chart --symbol NFLX --range 5y
+pat build yahoo.chart --symbol NFLX --cik 1065280   # o vínculo é DECLARADO
+pat metric ev_ebitda@v1 --cik 1065280 --period-end 2024-12-31 --as-of 2026-08-29
+```
+
+| Netflix, fechamento de 2024 | |
+|---|---|
+| preco_por_acao@v1 | 89,13 USD (ajustado; 891,32 pré-desdobramento) |
+| acoes_em_circulacao@v1 | 4.277,6 MM |
+| valor_de_mercado@v1 | 381.268,5 MM USD |
+| enterprise_value@v1 | 389.046,5 MM USD |
+| **ev_ebitda@v1** | **14,9x** |
+| preco_lucro@v1 | 43,8x |
+
+**Stooq foi a primeira escolha e está fora:** ele passou a servir um desafio de
+prova de trabalho em JavaScript. Resolvê-lo seria contornar um controle de
+acesso deliberado, além de frágil — o desafio muda e o pipeline quebra em
+silêncio, num dado que alimenta valuation.
+
+O preço é a **fonte mais fraca do catálogo**: `PUBLIC_WEB`, não
+`PRIMARY_OFFICIAL`. A marca viaja no `Retrieval` e chega ao resultado, e é o que
+permite auditar depois quanto de uma conclusão dependeu de fonte fraca.
+
+### Um mapeamento que cruza taxonomias
+
+Uma companhia é **uma só**, e os dados dela vêm de regimes diferentes: o
+resultado está no arquivamento, o preço está no mercado, e nenhum dos dois é *o*
+regime dela. Fixar a taxonomia por arquivo obrigaria a Netflix a ter dois
+mapeamentos, e nenhuma métrica poderia combiná-los — que é exatamente o que
+valor de mercado é.
+
+```toml
+[[binding]]
+concept_id = "share_price"
+[[binding.line]]
+taxonomy = "market.quote"     # o arquivo declara us-gaap.xbrl; a linha manda
+series   = "close"
+```
+
+`LineAddress` sempre carregou `taxonomy` — era o contrato dizendo que isso vale
+por endereço. Até agora a informação existia e ninguém a usava.
+
+### O sábado que não teve pregão
+
+O exercício da Intel fecha no último sábado de dezembro. Pedir o preço nessa
+data tem duas saídas ruins e simétricas: recusar torna o valor de mercado
+inutilizável em metade dos exercícios fiscais americanos; substituir em silêncio
+afirma que houve negociação num dia em que não houve.
+
+A saída usada é a terceira — janela declarada de 10 dias, **sempre para trás**
+(para frente seria vazamento de futuro), e o deslocamento aparece:
+
+```
+share_price                           90.75  + market.quote[series=close]
+  fact_id 173c6cedc48d61f5-q-837   conhecido 2026-08-29
+  ATENCAO: data-base do fato e 2024-12-27, e nao 2024-12-28
+```
+
+Esse aviso não existia. O resolver já devolvia a data certa, o `MetricResult`
+carimba a data pedida (uma métrica de FY2024 fala de FY2024), e o deslocamento
+não aparecia em lugar nenhum legível — substituição silenciosa por omissão de um
+campo. `InputRef.period_end` fecha o buraco.
+
 ### Inline XBRL, e onde vivem os elementos do emissor
 
 O endpoint `companyfacts` da SEC publica **só taxonomias padrão** — `us-gaap`,

@@ -117,6 +117,14 @@ class StatementKind(StrEnum):
     COMPREHENSIVE_INCOME = "comprehensive_income"
     VALUE_ADDED = "value_added"
 
+    MARKET = "market"
+    """Observacao de mercado, e nao peca contabil.
+
+    Um preco nao e uma demonstracao: ninguem o publicou como parte de um
+    relatorio, e ele nao fecha com nada. Ele entra no mesmo motor porque
+    precisa do mesmo AS OF e da mesma procedencia - e fica com membro proprio
+    porque chama-lo de BALANCE faria uma cotacao parecer uma conta auditada."""
+
 
 class TaxonomyId(StrEnum):
     """Taxonomia de relatorio que um endereco enderaca.
@@ -129,6 +137,14 @@ class TaxonomyId(StrEnum):
     CVM_PLANO_PADRONIZADO = "cvm.plano_padronizado"
     US_GAAP_XBRL = "us-gaap.xbrl"
     """Reservado. Nada implementa esta taxonomia na Fase 2."""
+
+    MARKET_QUOTE = "market.quote"
+    """Serie de mercado. Enderecada por papel e nome de serie.
+
+    Nao e uma taxonomia contabil, e por isso ela existe em separado: forcar
+    preco por dentro de `us-gaap.xbrl` faria o adapter americano ter um ramo
+    para uma coisa que nao e us-gaap, e a terceira fonte de mercado pediria um
+    quarto ramo."""
 
 
 class AccountingFramework(StrEnum):
@@ -496,6 +512,19 @@ class InputRef(Frozen):
     currency: str | None = None
     knowledge_date: date | None = None
     locator: str | None = None
+
+    period_end: date | None = None
+    """A data-base do FATO, que nem sempre e a que se pediu.
+
+    O caso que obrigou este campo a existir e a cotacao: quem pede o preco de
+    28 de dezembro de 2024 - um sabado - recebe o fechamento de sexta, porque a
+    bolsa nao abriu. O resolver ja devolvia a data certa; o `MetricResult`
+    carimba a data PEDIDA, como deve (uma metrica de FY2024 fala de FY2024), e
+    ate aqui o deslocamento nao aparecia em lugar nenhum legivel.
+
+    Sem isto, "89,55" apareceria como o preco de 28/12 e ninguem teria como
+    notar que 28/12 foi sabado. Substituicao silenciosa e exatamente o que este
+    projeto recusa - e ela estava acontecendo por omissao de um campo."""
 
 
 class CheckOutcome(Frozen):

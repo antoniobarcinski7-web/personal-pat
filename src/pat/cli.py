@@ -135,6 +135,10 @@ def cmd_fetch(args) -> int:
         # duas normalizacoes do mesmo identificador, e um zero a esquerda
         # perdido num dos dois lados nao apareceria ate a chave logica divergir.
         params["cik"] = args.cik
+    if getattr(args, "symbol", None):
+        params["symbol"] = args.symbol
+    if getattr(args, "range", None):
+        params["range"] = args.range
 
     store, catalog, conn = _open(args)
     registry = Registry()
@@ -258,10 +262,13 @@ def cmd_build(args) -> int:
     # O despacho e por dataset, e nao por flag: `--cik` num dataset da CVM e
     # um erro de digitacao, nao um modo. Ramificar aqui mantem os dois
     # caminhos com a mesma cara para quem digita, e separados por dentro.
+    from pat.build_market import SUPPORTED_MARKET_DATASETS
     from pat.build_sec import SUPPORTED_SEC_DATASETS
 
     if args.dataset in SUPPORTED_SEC_DATASETS:
         return _build_sec(args, conn=conn, bronze=bronze)
+    if args.dataset in SUPPORTED_MARKET_DATASETS:
+        return _build_market(args, conn=conn, bronze=bronze)
 
     years = None
     if args.year:
@@ -365,6 +372,58 @@ def _build_sec(args, *, conn, bronze) -> int:
     except ValueError as exc:
         # `parse_companyfacts` levanta quando o layout da origem muda. Isso e
         # informacao sobre a FONTE, e merece sair diferente de um erro de uso.
+        print(f"layout inesperado na origem: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        catalog.finish_run(run.run_id, status, datetime.now(UTC))
+        conn.close()
+
+
+def _build_market(args, *, conn, bronze) -> int:
+    """O build de mercado. Mesma forma de saida dos outros dois."""
+    from pat.build import BuildError
+    from pat.build_market import build_market_dataset
+
+    if not getattr(args, "symbol", None):
+        print(
+            f"{args.dataset} exige --symbol (o papel, ex. NFLX)",
+            file=sys.stderr,
+        )
+        conn.close()
+        return 1
+
+    run = new_run(command=f"build {args.dataset} symbol={args.symbol}")
+    catalog = Catalog(conn)
+    catalog.start_run(run)
+
+    status = RunStatus.FAILED
+    try:
+        cik = args.cik[0] if isinstance(args.cik, list) and args.cik else args.cik
+        report = build_market_dataset(
+            dataset_id=args.dataset,
+            conn=conn,
+            bronze=bronze,
+            run=run,
+            symbol=args.symbol,
+            cik=cik,
+        )
+        for resource_key, sha in report.resources:
+            print(
+                f"[{resource_key}] {sha[:12]}  cotacoes {report.quotes_read:,}  "
+                f"gold +{report.gold_written:,}  entidades +{report.entities_written}"
+            )
+        print(f"           papel {report.symbol} -> {report.entity_id}")
+        if report.skipped_null:
+            # Pregao sem fechamento publicado. O buraco e da fonte, e
+            # preenche-lo seria inventar negociacao que nao houve.
+            print(f"           sem fechamento na origem: {report.skipped_null}")
+        print(f"\ngold total {gold.count(conn):,} fatos")
+        status = RunStatus.SUCCEEDED
+        return 0
+    except BuildError as exc:
+        print(f"erro de build: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
         print(f"layout inesperado na origem: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -1722,6 +1781,14 @@ def _print_metric(result) -> None:
             sinal = "+" if (ref.sign_applied or 1) > 0 else "-"
             print(f"    {ref.role:<22} {ref.value:>20,.2f}  {sinal} {ref.address}")
             print(f"      fact_id {ref.fact_id}   conhecido {ref.knowledge_date}")
+            # So quando DIFERE do que se pediu: uma cotacao de sexta para uma
+            # data de sabado. Imprimir sempre encheria a saida de uma linha que
+            # repete o cabecalho, e o aviso deixaria de ser aviso.
+            if ref.period_end is not None and ref.period_end != result.period_end:
+                print(
+                    f"      ATENCAO: data-base do fato e {ref.period_end}, e nao "
+                    f"{result.period_end} - a fonte nao tem observacao na data pedida"
+                )
 
 
 def cmd_metric(args) -> int:
@@ -1815,6 +1882,12 @@ def cmd_accounts(args) -> int:
         conn.close()
 
 
+def _TAXONOMIAS():
+    from pat.contracts.semantics import TaxonomyId
+
+    return tuple(TaxonomyId)
+
+
 def cmd_mapping_check(args) -> int:
     """Confere que todo binding em uso ainda resolve, e com o rotulo esperado."""
     if (conn := _open_readonly(args)) is None:
@@ -1849,6 +1922,14 @@ def cmd_mapping_check(args) -> int:
         results = check_chain(
             chain,
             resolver,
+            # Um mapeamento pode cruzar taxonomias - preco de mercado ao lado
+            # do resultado do arquivamento -, e a conferencia precisa do mesmo
+            # despacho por endereco que o motor faz.
+            resolvers={
+                t: r
+                for t in _TAXONOMIAS()
+                if (r := engine.resolver_for(t)) is not None
+            },
             entity_id=entity[0],
             period_end=date.fromisoformat(args.period_end),
             as_of=date.fromisoformat(args.as_of),
@@ -2464,6 +2545,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="companhia americana (SEC), com ou sem zeros a esquerda; "
         "exige PAT_SEC_USER_AGENT",
     )
+    p_fetch.add_argument("--symbol", help="papel na fonte de mercado, ex. NFLX")
+    p_fetch.add_argument(
+        "--range",
+        help="janela da serie de cotacao: 1y, 5y, max... (default: max)",
+    )
     p_fetch.set_defaults(func=cmd_fetch)
 
     sub.add_parser("status", help="estatisticas do bronze").set_defaults(func=cmd_status)
@@ -2486,6 +2572,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="materializa so estas companhias; repetivel. Base do fluxo por projeto.",
     )
+    p_build.add_argument("--symbol", help="papel, para datasets de mercado")
     p_build.add_argument(
         "--cik",
         action="append",

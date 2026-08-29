@@ -475,6 +475,75 @@ sign      = 1
 label_as_reported = "Amortization of content assets"
 
 # ---------------------------------------------------------------------------
+# Mercado
+#
+# ESTE ARQUIVO CRUZA DUAS TAXONOMIAS, e isso e novo.
+#
+# O cabecalho declara `us-gaap.xbrl`, e a linha de preco declara a dela. Uma
+# companhia e UMA so, e os dados dela vem de regimes diferentes: o resultado
+# esta no arquivamento e o preco esta no mercado, e nenhum dos dois e "o"
+# regime dela. Fixar a taxonomia por ARQUIVO obrigaria a Netflix a ter dois
+# mapeamentos, e nenhuma metrica poderia combinar os dois - que e exatamente o
+# que valor de mercado e.
+#
+# `LineAddress` sempre carregou `taxonomy`: era o contrato dizendo que isso
+# vale por endereco. Ate agora a informacao existia e ninguem a usava.
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "share_price"
+fidelity   = "exact"
+equivalence_basis = """
+A serie `close` do regime de mercado e o fechamento AJUSTADO por desdobramento \
+e proventos - e nao o preco negociado no dia.
+
+O ajuste importa mais nesta companhia do que na media: a Netflix desdobrou 10 \
+para 1 em novembro de 2025, e uma serie de fechamento bruto mostraria queda de \
+90% num dia em que ninguem perdeu nada.
+
+`exact` quanto a EQUIVALENCIA - a serie e exatamente o preco da acao -, e a \
+fraqueza esta na PROCEDENCIA, que e outro eixo: `PUBLIC_WEB`, e nao \
+`PRIMARY_OFFICIAL`. Nenhum regulador publica preco. A marca viaja no \
+`Retrieval` e permite auditar depois quanto de uma conclusao dependeu de fonte \
+fraca.
+
+Conferido: fechamento ajustado de 2024-12-31 em US$ 89,13 - equivalente a \
+US$ 891,32 antes do desdobramento.
+"""
+[[binding.line]]
+taxonomy = "market.quote"
+series   = "close"
+sign     = 1
+label_as_reported = "Adjusted close"
+
+[[binding]]
+concept_id = "shares_outstanding"
+fidelity   = "exact"
+equivalence_basis = """
+`CommonStockSharesOutstanding` e a contagem de acoes em circulacao na \
+data-base, do balanco.
+
+NAO usar `WeightedAverageNumberOfDilutedSharesOutstanding`, que a Netflix \
+tambem publica: aquela e a media ponderada do periodo, denominador do lucro \
+por acao. Multiplicar preco de uma DATA por uma media de um PERIODO daria o \
+valor de uma companhia que nao existe em data nenhuma.
+
+Tambem nao e `dei:EntityCommonStockSharesOutstanding`, da capa do formulario: \
+aquela e a contagem numa data proxima ao ARQUIVAMENTO, e nao no fim do \
+exercicio - util para saber quantas acoes existem hoje, errada para casar com \
+um balanco.
+
+O desdobramento aparece aqui tambem, e em direcao oposta a do preco: os \
+arquivamentos posteriores a novembro de 2025 reapresentam a contagem \
+multiplicada por dez. O produto sobrevive porque a consulta bitemporal traz as \
+duas pontas do mesmo momento.
+"""
+[[binding.line]]
+element   = "CommonStockSharesOutstanding"
+statement = "balance"
+sign      = 1
+label_as_reported = "Common stock shares outstanding"
+
+# ---------------------------------------------------------------------------
 # O QUE NAO ESTA LIGADO, E POR QUE
 # ---------------------------------------------------------------------------
 #

@@ -249,6 +249,7 @@ class Engine:
                     address=f"{endereco.as_str()} [{chave}]",
                     fact_id=outcome.fact_id,
                     knowledge_date=outcome.knowledge_date,
+                    period_end=outcome.period_end,
                     sign_applied=line.sign,
                     is_metric=False,
                     fidelity=binding.fidelity,
@@ -577,7 +578,15 @@ class Engine:
 
         for line in binding.lines:
             tried.append(line.address.as_str())
-            outcome = resolver.resolve(
+            # O resolver sai do ENDERECO, e nao do arquivo de mapeamento.
+            #
+            # Uma companhia e uma so e os dados dela vem de regimes diferentes:
+            # o resultado esta no arquivamento e o preco esta no mercado. Fixar
+            # o resolver pela taxonomia do arquivo obrigaria a companhia a ter
+            # um mapeamento por regime, e nenhuma metrica poderia combinar os
+            # dois - que e exatamente o que valor de mercado e.
+            da_linha = self._resolvers.get(line.address.taxonomy, resolver)
+            outcome = da_linha.resolve(
                 entity_id=entity_id,
                 address=line.address,
                 period_end=period_end,
@@ -610,6 +619,10 @@ class Engine:
                     currency=outcome.currency,
                     knowledge_date=outcome.knowledge_date,
                     locator=outcome.locator,
+                    # A data-base do FATO, que nem sempre e a pedida: um preco
+                    # de sabado resolve para o pregao de sexta, e sem isto o
+                    # deslocamento nao apareceria em lugar nenhum legivel.
+                    period_end=outcome.period_end,
                 )
             )
 

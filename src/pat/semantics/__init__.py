@@ -52,6 +52,7 @@ def build_engine(
     from pat import __version__
     from pat.query.asof import AsOf
     from pat.semantics.frameworks.cvm_dfp.resolver import CvmDfpResolver
+    from pat.semantics.frameworks.market.resolver import MarketQuoteResolver
     from pat.semantics.frameworks.us_gaap.resolver import UsGaapResolver
 
     asof = AsOf(conn)
@@ -59,6 +60,7 @@ def build_engine(
         resolvers={
             TaxonomyId.CVM_PLANO_PADRONIZADO: CvmDfpResolver(asof),
             TaxonomyId.US_GAAP_XBRL: UsGaapResolver(asof),
+            TaxonomyId.MARKET_QUOTE: MarketQuoteResolver(asof),
         },
         mappings=mappings if mappings is not None else load_dir(mappings_dir or _default_dir()),
         registry=registry if registry is not None else default_registry(),

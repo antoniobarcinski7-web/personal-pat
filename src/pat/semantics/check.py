@@ -47,8 +47,16 @@ def check_chain(
     period_end: date,
     as_of: date,
     scope: ReportingScope = ReportingScope.CONSOLIDATED,
+    resolvers: dict | None = None,
 ) -> list[BindingCheck]:
-    """Confere todo binding alcancavel pela cadeia, do mais especifico ao menos."""
+    """Confere todo binding alcancavel pela cadeia, do mais especifico ao menos.
+
+    `resolvers` permite conferir um mapeamento que cruza taxonomias - o preco
+    de mercado ao lado do resultado do arquivamento. Sem ele, a conferencia
+    usaria o resolver da cadeia para toda linha e quebraria na primeira que
+    aponta para outro regime, dizendo que o mapeamento esta errado quando quem
+    esta errado e a conferencia.
+    """
     out: list[BindingCheck] = []
     vistos: set[str] = set()
 
@@ -62,7 +70,8 @@ def check_chain(
             concept = concepts.get(binding.concept_id)
             for line in binding.lines:
                 endereco = line.address.as_str()
-                outcome = resolver.resolve(
+                da_linha = (resolvers or {}).get(line.address.taxonomy, resolver)
+                outcome = da_linha.resolve(
                     entity_id=entity_id,
                     address=line.address,
                     period_end=period_end,

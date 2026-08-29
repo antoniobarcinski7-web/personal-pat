@@ -99,6 +99,15 @@ def _period_type(line: XbrlFactLine) -> PeriodType | None:
     return None
 
 
+NON_MONETARY_UNITS = frozenset({"shares", "pure"})
+"""Unidades que NAO sao dinheiro e ainda assim sao grandeza economica.
+
+`shares` entrou porque valor de mercado precisa de contagem de acoes, e ela nao
+tem moeda: o `Fact` grava `currency=None`, que o contrato ja previa. Chamar
+acoes de USD para caber no filtro antigo faria uma contagem entrar numa soma de
+dinheiro sem ninguem notar."""
+
+
 def build_facts_from_xbrl(
     lines: list[XbrlFactLine], *, currency: str = "USD"
 ) -> tuple[list[GoldFact], SecBuildReport]:
@@ -109,9 +118,13 @@ def build_facts_from_xbrl(
     prospectivos = 0
 
     for line in lines:
-        if line.unit != currency:
+        if line.unit != currency and line.unit not in NON_MONETARY_UNITS:
             nao_monetario += 1
             continue
+        # Contagem nao tem moeda. Gravar `currency="USD"` numa quantidade de
+        # acoes faria ela caber numa soma de dinheiro, e o contrato existe para
+        # que isso doa em vez de passar.
+        moeda = currency if line.unit == currency else None
         tipo = _period_type(line)
         if tipo is None:
             # Duracao que nao e ano, trimestre nem semestre: tipicamente um
@@ -147,8 +160,8 @@ def build_facts_from_xbrl(
             metric=f"{line.taxonomy}:{line.element}",
             metric_version=EXTRACTOR_VERSION,
             value=line.value,
-            unit=currency,
-            currency=currency,
+            unit=line.unit,
+            currency=moeda,
             period_type=tipo,
             period_start=line.period_start,
             period_end=line.period_end,
@@ -401,6 +414,9 @@ def _build_inline(*, conn, bronze, run: Run, ciks: list[str] | None) -> SecBuild
             form=str(forma),
             filed=publicado,
             source_member=str(resource_key),
+            # Dinheiro E contagem. A contagem de acoes e o insumo de valor de
+            # mercado, e sem ela o preco sozinho nao responde nada.
+            units=("USD", "shares"),
         )
         outcome.resources.append(
             SecResourceReport(

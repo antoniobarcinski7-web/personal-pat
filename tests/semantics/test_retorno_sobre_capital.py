@@ -109,7 +109,14 @@ def test_a_excecao_de_mistura_e_por_metrica_e_nao_por_dimensao():
     misturam = {
         str(m.ref) for m in registro.all() if m.definition.mixes_period_kinds
     }
-    assert misturam == {"roe@v1", "roic@v1"}
+    # Cresceu com os multiplos: EV e saldo, EBITDA e fluxo, e dividir um pelo
+    # outro e o que um multiplo E - a mesma razao de `roe@v1`.
+    assert misturam == {
+        "roe@v1",
+        "roic@v1",
+        "ev_ebitda@v1",
+        "preco_lucro@v1",
+    }
 
     margem = registro.get("margem_ebitda@v1").definition
     assert margem.dimension is Dimension.RATIO

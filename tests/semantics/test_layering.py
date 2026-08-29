@@ -101,10 +101,14 @@ def test_so_o_resolver_e_a_raiz_de_composicao_tocam_a_camada_de_consulta():
     adaptador - e `__init__.py`, que e a raiz de composicao, o lugar onde o
     sistema escolhe com que fontes concretas vai falar.
 
-    O conjunto cresceu na M5.6 com `us_gaap/resolver.py`, e crescer assim e o
-    comportamento esperado: cada jurisdicao nova traz UM resolver. O que o
-    teste continua impedindo e um arquivo que nao seja resolver nem raiz
-    aparecer aqui - seria a camada semantica lendo o gold por fora.
+    O conjunto cresceu na M5.6 com `us_gaap/resolver.py` e de novo com
+    `market/resolver.py`, e crescer assim e o comportamento esperado: cada
+    REGIME novo traz UM resolver. O de mercado nao e uma jurisdicao - preco nao
+    e peca contabil -, e a regra continua a mesma porque ela nunca foi sobre
+    jurisdicao: e sobre quem tem licenca para ler o gold.
+
+    O que o teste impede e um arquivo que nao seja resolver nem raiz aparecer
+    aqui - seria a camada semantica lendo o gold por fora.
     """
     atravessam = {
         path.relative_to(SEMANTICS).as_posix()
@@ -115,6 +119,7 @@ def test_so_o_resolver_e_a_raiz_de_composicao_tocam_a_camada_de_consulta():
         "__init__.py",
         "frameworks/cvm_dfp/resolver.py",
         "frameworks/us_gaap/resolver.py",
+        "frameworks/market/resolver.py",
     }
     # E a regra por tras do conjunto, dita de forma que sobrevive ao proximo
     # regime: todo arquivo que le `pat.query` ou e a raiz, ou e um resolver.

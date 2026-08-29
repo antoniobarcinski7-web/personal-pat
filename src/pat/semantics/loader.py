@@ -99,7 +99,10 @@ def parse_mapping(raw: bytes, *, where: str) -> Mapping:
     except ValueError as exc:
         raise MappingError(f"{where}: framework desconhecido: {exc}") from exc
 
-    adapter = get_adapter(taxonomy)
+    # Confere que a taxonomia do arquivo tem adapter, mesmo que toda linha
+    # declare a sua: um arquivo que aponta para uma taxonomia sem adapter e
+    # erro de configuracao, e falhar aqui e melhor que falhar por linha.
+    get_adapter(taxonomy)
 
     bindings: list[ConceptBinding] = []
     for block in data.pop("binding", []):
@@ -117,8 +120,24 @@ def parse_mapping(raw: bytes, *, where: str) -> Mapping:
         for line_raw in lines_raw:
             line_raw = dict(line_raw)
             sign = int(line_raw.pop("sign", 1))
+            # A linha pode declarar a PROPRIA taxonomia, e o default e a do
+            # arquivo. Existe porque uma companhia e uma so e os dados dela
+            # vem de regimes diferentes: o resultado esta no arquivamento e o
+            # preco esta no mercado, e nenhum dos dois e "o" regime dela.
+            #
+            # `LineAddress` sempre carregou `taxonomy` - era o contrato dizendo
+            # que isso vale por endereco, e nao por arquivo. Ate aqui a
+            # informacao existia e nao era usada.
+            propria = line_raw.pop("taxonomy", None)
             try:
-                address = adapter.parse_address(line_raw)
+                linha_taxonomy = TaxonomyId(str(propria)) if propria else taxonomy
+            except ValueError as exc:
+                raise MappingError(
+                    f"{where}: binding de {concept_id}: taxonomia desconhecida "
+                    f"na linha: {exc}"
+                ) from exc
+            try:
+                address = get_adapter(linha_taxonomy).parse_address(line_raw)
             except ValueError as exc:
                 raise MappingError(f"{where}: binding de {concept_id}: {exc}") from exc
             lines.append(BoundLine(address=address, sign=sign))

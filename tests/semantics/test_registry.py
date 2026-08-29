@@ -134,6 +134,13 @@ def test_registro_embutido_e_valido():
         "aliquota_efetiva@v1",
         "capital_investido@v1",
         "roic@v1",
+        # Mercado e multiplos
+        "preco_por_acao@v1",
+        "acoes_em_circulacao@v1",
+        "valor_de_mercado@v1",
+        "enterprise_value@v1",
+        "ev_ebitda@v1",
+        "preco_lucro@v1",
     }
 
 

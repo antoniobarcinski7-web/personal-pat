@@ -60,9 +60,12 @@ def install_builtins() -> None:
     sistema.
     """
     from pat.semantics.frameworks.cvm_dfp.adapter import CvmPlanoPadronizadoAdapter
+    from pat.semantics.frameworks.market.adapter import MarketQuoteAdapter
     from pat.semantics.frameworks.us_gaap.adapter import UsGaapXbrlAdapter
 
     if TaxonomyId.CVM_PLANO_PADRONIZADO not in _ADAPTERS:
         register(CvmPlanoPadronizadoAdapter())
     if TaxonomyId.US_GAAP_XBRL not in _ADAPTERS:
         register(UsGaapXbrlAdapter())
+    if TaxonomyId.MARKET_QUOTE not in _ADAPTERS:
+        register(MarketQuoteAdapter())

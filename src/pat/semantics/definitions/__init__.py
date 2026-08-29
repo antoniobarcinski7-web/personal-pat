@@ -13,6 +13,7 @@ arquivo esquecido numa metrica fantasma.
 from __future__ import annotations
 
 from pat.semantics.definitions import (
+    acoes_em_circulacao,
     aliquota_efetiva,
     caixa_e_equivalentes,
     capex,
@@ -23,17 +24,22 @@ from pat.semantics.definitions import (
     divida_liquida,
     ebit,
     ebitda,
+    enterprise_value,
+    ev_ebitda,
     fcf,
     fluxo_de_caixa_operacional,
     dividendos_pagos,
     lucro_liquido,
     margem_ebitda,
     patrimonio_liquido,
+    preco_lucro,
+    preco_por_acao,
     receita_liquida,
     recompras,
     retorno_ao_acionista,
     roe,
     roic,
+    valor_de_mercado,
 )
 from pat.semantics.registry import MetricRegistry
 
@@ -64,6 +70,13 @@ MODULES = (
     aliquota_efetiva,
     capital_investido,
     roic,
+    # Mercado e multiplos
+    preco_por_acao,
+    acoes_em_circulacao,
+    valor_de_mercado,
+    enterprise_value,
+    ev_ebitda,
+    preco_lucro,
 )
 
 
