@@ -170,6 +170,7 @@ em **temas**, e cada tema pergunta algo que um analista reconheceria:
 | `rentabilidade` | o crescimento chega ao resultado operacional? |
 | `geracao-de-caixa` | o resultado vira caixa? |
 | `solvencia` | a estrutura de capital aguenta? |
+| `retorno-sobre-capital` | o capital empregado rende mais do que custa? |
 | `alocacao-de-capital` | para onde vai o caixa gerado? |
 | `narrativa` | o que a companhia diz sobre o próprio negócio e os riscos? |
 

@@ -580,6 +580,37 @@ o usam de forma consistente (o GPA publica 0,0 ali e põe 451 MM em
 `2.01.05.02.17`), então a métrica **recusa** em vez de devolver zero com
 `fidelity = exact`.
 
+### Retorno sobre o capital, e a mistura que o motor passou a permitir
+
+`roe@v1` divide o resultado do exercício pelo patrimônio da data-base — um
+fluxo por um saldo. O motor **recusava** essa mistura, e a recusa está certa na
+quase totalidade dos casos: somar um fluxo a um saldo é uma grandeza que não
+existe. Dividir um pelo outro é exatamente o que um retorno sobre capital é.
+
+A exceção é declarada **por métrica** (`mixes_period_kinds`), e não pela
+dimensão: `margem_ebitda@v1` também é `RATIO` e não mistura nada, e deixar
+`RATIO` liberar automaticamente trocaria uma checagem por uma coincidência de
+tipo. O resultado herda o período do insumo de fluxo — um ROE carimbado como
+`INSTANT` diria que o lucro do exercício aconteceu num dia.
+
+| Netflix FY2024 | |
+|---|---|
+| roe@v1 | 35,21% |
+| roic@v1 | 28,00% |
+| aliquota_efetiva@v1 | 12,6% |
+| capital_investido@v1 | 32.521,6 MM USD |
+| **retorno_ao_acionista@v1** | **INDISPONÍVEL** |
+
+A última linha é o ponto: a Netflix recompra ações e **não paga dividendo**.
+Isso é fato sobre a companhia, não lacuna do sistema — e apresentar só a
+recompra sob o nome "retorno ao acionista" diria que o dividendo é zero
+calculado. `recompras@v1` isolada continua respondendo.
+
+Três recusas nomeadas onde a aritmética funcionaria e mentiria: patrimônio,
+capital investido ou resultado antes dos tributos não positivos. Um prejuízo
+sobre patrimônio negativo sai **positivo**, e "ROE de 40%" numa companhia que
+destruiu capital é o pior tipo de número.
+
 ### Arquivamentos da SEC no corpus
 
 ```bash

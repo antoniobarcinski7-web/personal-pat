@@ -161,17 +161,42 @@ THEMES: tuple[Theme, ...] = (
         ),
     ),
     Theme(
+        slug="retorno-sobre-capital",
+        question="o capital empregado rende mais do que custa?",
+        metrics=("roic@v1", "roe@v1", "capital_investido@v1", "aliquota_efetiva@v1"),
+        completion_criteria=(
+            "ROIC e ROE em pelo menos tres exercicios, ou uma recusa nomeada - "
+            "patrimonio ou capital investido nao positivo torna a razao sem "
+            "leitura, e isso e resposta, nao falha"
+        ),
+        priority=TaskPriority.HIGH,
+        triggers=("roic", "roe", "retorno", "capital empregado", "eficiencia"),
+        open_questions=(
+            "quanto custa o capital desta companhia? o motor calcula o retorno e "
+            "nao o custo - o WACC e premissa do analista, nunca fato do sistema",
+        ),
+    ),
+    Theme(
         slug="alocacao-de-capital",
         question="para onde vai o caixa gerado?",
-        metrics=("fcf@v1", "capex@v1", "divida_liquida@v1"),
+        metrics=(
+            "fcf@v1",
+            "capex@v1",
+            "recompras@v1",
+            "dividendos_pagos@v1",
+            "retorno_ao_acionista@v1",
+            "divida_liquida@v1",
+        ),
         completion_criteria=(
-            "FCF e variacao da divida liquida em pelo menos dois exercicios, o que "
-            "delimita quanto sobrou depois do investimento e da divida"
+            "FCF, capex, devolucao ao acionista e variacao da divida liquida em "
+            "pelo menos dois exercicios - as quatro pontas por onde o caixa sai. "
+            "Companhia que nao paga dividendo produz recusa nomeada, e a recusa "
+            "faz parte da resposta"
         ),
         triggers=("alocacao", "dividendo", "recompra", "buyback", "capital"),
         open_questions=(
-            "quanto foi para dividendo e quanto para recompra? nenhum dos dois tem "
-            "conceito registrado hoje, entao a resposta so existe no documento",
+            "a devolucao ao acionista e sustentavel pelo FCF, ou vem de divida? o "
+            "motor da as duas series; a leitura de sustentabilidade e do analista",
         ),
         depends_on=("geracao-de-caixa",),
     ),

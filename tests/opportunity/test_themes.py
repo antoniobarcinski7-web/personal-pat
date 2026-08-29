@@ -33,6 +33,14 @@ TUDO = frozenset(
         "divida_bruta@v1",
         "divida_liquida@v1",
         "divida_bruta_com_arrendamento@v1",
+        "patrimonio_liquido@v1",
+        "recompras@v1",
+        "dividendos_pagos@v1",
+        "retorno_ao_acionista@v1",
+        "aliquota_efetiva@v1",
+        "capital_investido@v1",
+        "roe@v1",
+        "roic@v1",
     }
 )
 
@@ -50,6 +58,7 @@ def test_pergunta_ampla_vira_investigacao():
         "rentabilidade",
         "geracao-de-caixa",
         "solvencia",
+        "retorno-sobre-capital",
         "alocacao-de-capital",
         "narrativa",
     ]
@@ -155,8 +164,15 @@ def test_nenhum_tema_propoe_hipotese():
 
 
 def test_os_temas_de_prioridade_alta_sao_os_que_definem_a_companhia():
+    """Quatro temas dizem o que a companhia E; os outros dizem o que ela FAZ
+    com o que gera, e dependem dos primeiros para significar alguma coisa."""
     altos = {t.slug for t in THEMES if t.priority is TaskPriority.HIGH}
-    assert altos == {"crescimento", "rentabilidade", "geracao-de-caixa"}
+    assert altos == {
+        "crescimento",
+        "rentabilidade",
+        "geracao-de-caixa",
+        "retorno-sobre-capital",
+    }
 
 
 def test_a_busca_no_corpus_e_declarada_e_nao_derivada_da_prosa():
