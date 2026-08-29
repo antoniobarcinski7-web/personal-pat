@@ -411,3 +411,43 @@ def test_respond_sem_agente_faz_o_mesmo(ws, tools):
     )
     assert resposta.intent is Intent.STATUS
     assert resposta.turn_index == 0
+
+
+# -- pergunta ampla ---------------------------------------------------------
+
+
+def test_pergunta_ampla_investiga_em_vez_de_consultar():
+    """"O que voce acha da Netflix?" tem interrogacao e NAO e uma consulta.
+
+    Mandada para ASK, ela caia na busca por metrica, nao casava com nenhuma, e
+    terminava procurando as palavras da propria pergunta no corpus - a melhor
+    evidencia sobre a Netflix virava o nome da companhia na CAPA do
+    arquivamento, cinco vezes.
+
+    A tabela e a MESMA que os temas usam: duas listas de "o que e pergunta
+    ampla" divergiriam, e a conversa passaria a decompor uma coisa e a
+    pesquisa outra.
+    """
+    from pat.opportunity.themes import AMPLAS
+
+    assert classify("O que voce acha da Netflix?") is Intent.INVESTIGATE
+    assert classify("analise a companhia") is Intent.INVESTIGATE
+    # Pergunta ESTREITA continua sendo consulta.
+    assert classify("Quanto foi a receita?") is Intent.ASK
+    assert any(m in "o que voce acha da netflix?" for m in AMPLAS)
+
+
+def test_ask_nao_procura_as_palavras_da_pergunta_no_corpus(agent):
+    """Uma resposta cheia de citacoes que nao respondem nada e pior que uma
+    recusa, porque parece fundamentada.
+
+    Quem quer busca textual pede busca textual, com os termos e a secao que
+    escolher.
+    """
+    resposta = fala(agent, "Qual e o churn de assinantes?")
+
+    assert TurnAction.SEARCHED_CORPUS not in resposta.actions
+    assert TurnAction.REFUSED in resposta.actions
+    assert not resposta.grounded_in
+    assert "pat evidence" in resposta.text
+

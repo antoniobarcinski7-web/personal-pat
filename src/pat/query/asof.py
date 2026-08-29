@@ -474,7 +474,22 @@ class AsOf:
         rows = self.conn.execute(
             f"""
             SELECT DISTINCT period_end FROM gold_fact
-            WHERE entity_id = ? AND period_type = ? {predicate}
+            WHERE entity_id = ? AND period_type = ?
+              -- Serie de MERCADO fica de fora, e a exclusao e a razao de esta
+              -- consulta existir com esse nome.
+              --
+              -- Uma cotacao e um fato instantaneo, e uma serie de cinco anos
+              -- tem 1.255 deles. Sem este corte, "as datas-base desta
+              -- companhia" passava a incluir todo pregao, e o agente pedia o
+              -- balanco em 21 de agosto de 2026 - uma sexta-feira qualquer, em
+              -- que a companhia nao publicou nada. As recusas saiam corretas e
+              -- a pergunta e que estava errada.
+              --
+              -- Um periodo COBERTO e um periodo que a companhia reportou. Que o
+              -- papel dela tenha negociado num dia nao faz daquele dia uma
+              -- data-base dela.
+              AND statement NOT LIKE 'market.%'
+              {predicate}
             ORDER BY period_end
             """,
             params,

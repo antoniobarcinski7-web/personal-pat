@@ -110,6 +110,18 @@ def classify(text: str) -> Intent:
     for intencao, marcadores in _MARCADORES:
         if any(m in baixo for m in marcadores):
             return intencao
+    # "O que voce acha da Netflix?" tem ponto de interrogacao e NAO e uma
+    # consulta: e um pedido de investigacao. Mandada para ASK, ela caia na
+    # busca por metrica, nao casava com nenhuma, e terminava procurando as
+    # palavras da propria pergunta no corpus.
+    #
+    # A tabela e a MESMA que os temas usam. Duas listas de "o que e pergunta
+    # ampla" divergiriam, e a conversa passaria a decompor uma coisa e a
+    # pesquisa outra.
+    from pat.opportunity.themes import AMPLAS
+
+    if any(marca in baixo for marca in AMPLAS):
+        return Intent.INVESTIGATE
     if any(m in baixo for m in _INTERROGATIVAS):
         return Intent.ASK
     return Intent.UNCLEAR
@@ -310,32 +322,28 @@ class ChatAgent:
                 actions=(TurnAction.QUERIED_ENGINE, TurnAction.REFUSED),
             )
 
-        if contexto.has_corpus:
-            termos = ShapeReasoner._termos_de_busca(texto)
-            resultado = self._tools.evidence(termos) if termos else None
-            hits = getattr(resultado, "hits", ()) if resultado is not None else ()
-            if hits:
-                return _Turn(
-                    text=(
-                        "Nao ha metrica registrada que responda isso. O que os "
-                        "documentos dizem, verbatim e atribuido:\n"
-                        + "\n".join(
-                            f"[{h.quote.published_at.isoformat()}] {h.quote.title}: "
-                            f"{h.quote.text}"
-                            for h in hits
-                        )
-                        + "\n\nIsto e citacao do emissor, nao numero calculado."
-                    ),
-                    actions=(TurnAction.SEARCHED_CORPUS,),
-                    grounded_in=tuple(h.quote.unit_id for h in hits),
-                )
+        # NAO ha busca no corpus a partir das palavras da pergunta.
+        #
+        # Derivar termos da prosa produzia exatamente o que se ve quando a
+        # pergunta cita a companhia: "o que voce acha da Netflix?" virava a
+        # busca `['netflix']`, e a melhor evidencia era o nome da companhia
+        # na CAPA do arquivamento, cinco vezes. Uma resposta cheia de
+        # citacoes que nao respondem nada e pior que uma recusa, porque
+        # parece fundamentada.
+        #
+        # Quem quer busca textual pede busca textual - `pat evidence`, com
+        # os termos e a secao que escolher.
+
 
         return _Turn(
             text=(
                 "Nao tenho como responder isso com o que esta coberto ate "
                 f"{self._ws.state.as_of.isoformat()}. Nenhuma metrica registrada casa "
-                "com a pergunta e o corpus nao trouxe trecho. Diga qual metrica ou "
-                "qual documento voce quer que eu olhe."
+                "com a pergunta. Nenhuma metrica registrada casa com ela, e eu "
+                "NAO procuro as palavras da sua frase nos documentos - isso "
+                "devolveria trecho que menciona os termos sem responder nada. "
+                "Diga qual metrica voce quer, ou use `pat evidence` com os termos "
+                "e a secao do documento."
             ),
             actions=(TurnAction.REFUSED,),
             follow_up=self._metricas_sugeridas(),
