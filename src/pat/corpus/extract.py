@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 
 import pypdf
@@ -57,8 +58,16 @@ from pat.corpus.extract_html import (
 )
 from pat.corpus.identity import unit_id
 
+Sectioner = Callable[[str], Iterable[tuple[int, int, tuple[str, ...]]]]
+"""Texto derivado -> (inicio, fim, caminho) por secao.
+
+Um `Callable`, e nao um import de `pat.parse`: o extrator e generico e nao
+pode conhecer regime nenhum. Quem escolhe o seccionador e a camada de
+corpus, que ja conhece a origem do documento."""
+
 __all__ = [
     "EXTRACTION_VERSION",
+    "Sectioner",
     "HTML_EXTRACTION_VERSION",
     "HTML_MEDIA_TYPE",
     "MAX_UNIT_CHARS",
@@ -133,7 +142,12 @@ def sniff_media_type(payload: bytes) -> str | None:
     return None
 
 
-def extract(document_id: str, payload: bytes) -> ExtractionOutcome:
+def extract(
+    document_id: str,
+    payload: bytes,
+    *,
+    sectioner: Sectioner | None = None,
+) -> ExtractionOutcome:
     """Bytes -> unidades, ou uma falha nomeada. Nunca as duas, nunca nenhuma.
 
     O despacho e por tipo REAL dos bytes, e cada tipo tem extrator com versao
@@ -144,7 +158,7 @@ def extract(document_id: str, payload: bytes) -> ExtractionOutcome:
     """
     media_type = sniff_media_type(payload)
     if media_type in (HTML_MEDIA_TYPE, XHTML_MEDIA_TYPE):
-        return _extract_html(document_id, payload)
+        return _extract_html(document_id, payload, sectioner)
     if media_type != PDF_MEDIA_TYPE:
         return _failed(
             document_id,
@@ -227,7 +241,9 @@ posicao, e nao ha elemento proprio para elas. Apontar para a raiz e menos
 preciso e honesto; inventar `p[999]` apontaria para um no que nao existe."""
 
 
-def _extract_html(document_id: str, payload: bytes) -> ExtractionOutcome:
+def _extract_html(
+    document_id: str, payload: bytes, sectioner: Sectioner | None = None
+) -> ExtractionOutcome:
     """HTML -> unidades, pelo MESMO algoritmo de blocos do PDF.
 
     Reusar o algoritmo e a escolha certa e nao preguica: "bloco separado por
@@ -250,6 +266,12 @@ def _extract_html(document_id: str, payload: bytes) -> ExtractionOutcome:
             f"{type(exc).__name__}: {exc}",
             remedy="Documento fica registrado como nao extraido; o blob continua no bronze.",
         )
+
+    # As secoes saem de quem conhece o REGIME do documento; este modulo so as
+    # aplica por offset. Sem `sectioner`, as unidades nascem sem
+    # `section_path` - o documento continua citavel, so que sem endereco de
+    # secao, o que e honesto para um formato cuja estrutura ninguem declarou.
+    secoes = tuple(sectioner(texto)) if sectioner is not None else ()
 
     units: list[DocumentUnit] = []
     caminhos = [caminho for _, caminho in marcas]
@@ -278,6 +300,7 @@ def _extract_html(document_id: str, payload: bytes) -> ExtractionOutcome:
                 locator=locator,
                 text=trecho,
                 char_count=len(trecho),
+                section_path=_secao_de(secoes, start),
                 extraction_version=HTML_EXTRACTION_VERSION,
             )
         )
@@ -300,6 +323,21 @@ def _extract_html(document_id: str, payload: bytes) -> ExtractionOutcome:
         extraction_version=HTML_EXTRACTION_VERSION,
         units=tuple(units),
     )
+
+
+def _secao_de(
+    secoes: tuple[tuple[int, int, tuple[str, ...]], ...], offset: int
+) -> tuple[str, ...]:
+    """A secao que contem este offset, ou vazio.
+
+    Vazio quando o bloco esta antes da primeira secao - capa, indice, cabecalho
+    de pagina. Rotular o indice com a secao seguinte seria justamente o erro
+    que a seccao existe para consertar.
+    """
+    for inicio, fim, caminho in secoes:
+        if inicio <= offset < fim:
+            return caminho
+    return ()
 
 
 def extract_pdf_page_texts(payload: bytes) -> tuple[str, ...]:

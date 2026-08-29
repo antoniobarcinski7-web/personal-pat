@@ -432,6 +432,14 @@ class EvidenceQuery(Frozen):
     published_from: date | None = None
     published_to: date | None = None
     speaker_roles: tuple[SpeakerRole, ...] = ()
+    sections: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Restringe a busca a estas secoes do documento, pelo primeiro nivel "
+            "de `section_path` - 'Item 1A', 'Item 7'. Vazio busca em tudo, "
+            "INCLUSIVE nas unidades sem secao (capa, indice, rodape)"
+        ),
+    )
     limit: int = Field(default=10, ge=1, le=50)
 
     @model_validator(mode="after")

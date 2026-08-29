@@ -1479,6 +1479,7 @@ def cmd_evidence(args) -> int:
             kinds=tuple(kinds),
             published_from=args.published_from,
             published_to=args.published_to,
+            sections=tuple(getattr(args, "section", []) or ()),
             limit=args.limit,
         )
     except ValueError as exc:
@@ -2776,6 +2777,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ev.add_argument("--kind", action="append", default=[])
     p_ev.add_argument("--published-from", type=date.fromisoformat)
     p_ev.add_argument("--published-to", type=date.fromisoformat)
+    p_ev.add_argument(
+        "--section",
+        action="append",
+        default=[],
+        help="restringe a busca a estas secoes do formulario; repetivel. "
+        "Ex.: --section 'Item 1A'. Sem ele, a busca inclui capa e indice",
+    )
     p_ev.add_argument("--limit", type=int, default=5)
     p_ev.add_argument("--full", action="store_true", help="mostra o trecho inteiro")
     p_ev.set_defaults(func=cmd_evidence)

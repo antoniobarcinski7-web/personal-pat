@@ -259,6 +259,30 @@ def _units_in_scope(
     if query.speaker_roles:
         clauses.append(f"u.speaker_role IN ({', '.join('?' * len(query.speaker_roles))})")
         params.extend(str(r) for r in query.speaker_roles)
+    if query.sections:
+        # Casa pelo PRIMEIRO nivel do caminho - "Item 1A" -, e nao pelo nome da
+        # secao: o nome vem da tabela do regulador e pode ser reescrito; o
+        # numero do item e o que o proprio formulario declara.
+        clauses.append(
+            f"len(u.section_path) > 0 AND u.section_path[1] IN "
+            f"({', '.join('?' * len(query.sections))})"
+        )
+        params.extend(query.sections)
+
+    # UMA versao de extrator por documento: a mais recente que existe para ele.
+    #
+    # Reprocessar cria unidades AO LADO das antigas - e a regra que faz uma
+    # citacao antiga continuar querendo dizer o que dizia. O efeito colateral,
+    # descoberto na primeira busca depois de um upgrade de extrator, e que a
+    # mesma passagem voltava DUAS vezes, com dois `unit_id` e o mesmo texto.
+    # Nao e duplicata de dado: sao duas leituras legitimas do mesmo blob. O que
+    # nao pode e a busca apresentar as duas como se fossem duas evidencias.
+    clauses.append(
+        "u.extraction_version = ("
+        "  SELECT MAX(v.extraction_version) FROM document_unit v"
+        "  WHERE v.document_id = u.document_id"
+        ")"
+    )
 
     rows = conn.execute(
         f"""

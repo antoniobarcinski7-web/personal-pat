@@ -118,6 +118,35 @@ def catalog_entries(
     return parse_catalog(bronze.read(rows[0][0]), cod_cvm=cod_cvm)
 
 
+def _sectioner_for(entry):
+    """O seccionador do documento, pela sua origem. Nenhum, quando nao ha.
+
+    A escolha vive AQUI porque a camada de corpus ja conhece a origem do
+    documento - `provider_id` e `origin_category` estao no candidato. O
+    extrator continua generico, e `pat.parse` continua sendo o unico lugar que
+    interpreta vocabulario de regime.
+
+    Origem sem seccionador declarado nao ganha `section_path`, e isso e
+    honesto: dizer que um comunicado ao mercado tem "Item 1A. Risk Factors"
+    seria inventar estrutura que o documento nao tem.
+    """
+    if entry.provider_id != "sec":
+        return None
+
+    from pat.parse.sec_sections import sections_for_form, split_sections
+
+    if not sections_for_form(entry.origin_category):
+        return None
+
+    def _seccionar(texto: str):
+        return tuple(
+            (s.char_start, s.char_end, s.path)
+            for s in split_sections(texto, form=entry.origin_category)
+        )
+
+    return _seccionar
+
+
 def sync_documents(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -163,8 +192,19 @@ def sync_documents(
 
             payload = bronze.read(document_id)
             ja_existe = corpus_store.read_document(conn, document_id) is not None
+            unidades = corpus_store.units_for_document(conn, document_id)
+            # Unidade de versao ANTIGA nao conta como extraida: o extrator
+            # mudou, e reprocessar cria unidades novas ao lado das antigas. Sem
+            # esta checagem, um upgrade de extrator nunca alcancaria documento
+            # nenhum ja processado - a capacidade nova existiria so para o
+            # proximo documento a entrar.
+            atuais = [
+                u
+                for u in unidades
+                if u.extraction_version in (EXTRACTION_VERSION, HTML_EXTRACTION_VERSION)
+            ]
 
-            if ja_existe and corpus_store.units_for_document(conn, document_id):
+            if ja_existe and atuais:
                 # Documento conhecido E extraido: nada a fazer. O `Retrieval`
                 # novo ja foi gravado - saber que o conteudo nao mudou naquela
                 # data e informacao.
@@ -172,11 +212,11 @@ def sync_documents(
                 continue
 
             if ja_existe:
-                # Conhecido e SEM unidade: extracao falhou antes. Tentar de
-                # novo e o comportamento certo - o extrator pode ter mudado
-                # desde entao, e foi exatamente o que aconteceu quando o
-                # extrator de HTML passou a existir. Pular aqui deixaria o
-                # documento permanentemente nao citavel por causa de uma
+                # Conhecido e sem unidade DESTA versao: ou a extracao falhou
+                # antes, ou o extrator mudou. Nos dois casos reprocessar e o
+                # comportamento certo, e nos dois casos ja aconteceu - o
+                # extrator de HTML passando a existir, e depois passando a
+                # marcar secao. Pular aqui deixaria o documento preso a uma
                 # limitacao que ja tinha sido removida.
                 outcome.skipped_existing += 1
             else:
@@ -192,7 +232,7 @@ def sync_documents(
                 )
                 outcome.documents_new += corpus_store.write_documents(conn, [document])
 
-            extraction = extract(document_id, payload)
+            extraction = extract(document_id, payload, sectioner=_sectioner_for(entry))
             if extraction.failure is not None:
                 corpus_store.write_failure(conn, extraction.failure)
                 outcome.failures.append(

@@ -107,6 +107,10 @@ class StepRequest(Frozen):
     period_from: date | None = None
     period_to: date | None = None
     terms: tuple[str, ...] = ()
+    sections: tuple[str, ...] = Field(
+        default=(),
+        description="Secoes do documento onde buscar. Vazio inclui capa e indice",
+    )
     statement: str | None = None
     limit: int = Field(default=5, ge=1, le=20)
 

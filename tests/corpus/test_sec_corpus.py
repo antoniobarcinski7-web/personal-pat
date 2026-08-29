@@ -358,3 +358,62 @@ def test_documento_sem_unidade_e_reprocessado(tmp_path, monkeypatch):
     assert terceira.units_written == unidades, "mas as unidades voltam"
     conn.close()
 
+
+# -- secao na unidade e na busca --------------------------------------------
+
+SECOES = (
+    b"<?xml version='1.0'?>\n"
+    b'<html xmlns="http://www.w3.org/1999/xhtml"><body>\n'
+    # Indice: numero e titulo em blocos separados, com pagina.
+    b"<table><tr><td>Item 1.</td></tr><tr><td>Business</td></tr>"
+    b"<tr><td>1</td></tr>"
+    b"<tr><td>Item 1A.</td></tr><tr><td>Risk Factors</td></tr>"
+    b"<tr><td>4</td></tr></table>\n"
+    # Corpo: numero e titulo juntos.
+    b"<div>Item 1.Business</div>"
+    b"<div>" + b"Somos uma companhia de streaming. " * 40 + b"</div>"
+    b"<div>Item 1A.Risk Factors</div>"
+    b"<div>" + b"We face intense competition from many providers. " * 40 + b"</div>"
+    b"</body></html>"
+)
+
+
+def _seccionar(texto: str):
+    from pat.parse.sec_sections import split_sections
+
+    return tuple(
+        (s.char_start, s.char_end, s.path) for s in split_sections(texto, form="10-K")
+    )
+
+
+def test_a_unidade_carrega_a_secao_em_que_estava():
+    resultado = extract(DOC, SECOES, sectioner=_seccionar)
+    assert resultado.failure is None
+
+    caminhos = {u.section_path for u in resultado.units}
+    assert ("Item 1A", "Risk Factors") in caminhos
+    assert ("Item 1", "Business") in caminhos
+
+
+def test_o_indice_fica_sem_secao_em_vez_de_herdar_a_seguinte():
+    """Rotular o sumario com a secao seguinte seria justamente o erro que a
+    seccao existe para consertar."""
+    resultado = extract(DOC, SECOES, sectioner=_seccionar)
+    indice = [u for u in resultado.units if u.text.strip() in {"Item 1.", "Business", "1"}]
+    assert indice, "o indice tem que estar entre as unidades - ele e citavel"
+    assert all(u.section_path == () for u in indice)
+
+
+def test_sem_seccionador_a_unidade_nasce_sem_secao():
+    """Formato cuja estrutura ninguem declarou continua citavel, sem endereco
+    de secao inventado."""
+    resultado = extract(DOC, SECOES)
+    assert resultado.failure is None
+    assert all(u.section_path == () for u in resultado.units)
+
+
+def test_a_versao_do_extrator_subiu_com_a_secao():
+    """O conteudo das unidades mudou - nao o texto, mas o endereco que elas
+    carregam -, e reprocessar cria unidades AO LADO das antigas."""
+    assert HTML_EXTRACTION_VERSION.startswith("html-blocks/v2")
+

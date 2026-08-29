@@ -403,12 +403,14 @@ class ShapeReasoner:
                 )
             )
         if context.has_corpus:
+            secoes = self._secoes_da_tarefa(task)
             for j, termos in enumerate(self._termos_da_tarefa(task)):
                 passos.append(
                     StepRequest(
                         step_id=f"evidencia-{j}"[:63],
                         kind=StepKind.EVIDENCE,
                         terms=termos,
+                        sections=secoes,
                         rationale=(
                             "o que a companhia disse sobre o assunto da tarefa, para "
                             "confrontar com o que os numeros mostram"
@@ -416,6 +418,16 @@ class ShapeReasoner:
                     )
                 )
         return tuple(passos)
+
+    @staticmethod
+    def _secoes_da_tarefa(task: ResearchTask) -> tuple[str, ...]:
+        """As secoes declaradas do tema. Vazio busca no documento inteiro."""
+        from pat.opportunity.themes import THEMES
+
+        for tema in THEMES:
+            if tema.slug == task.slug:
+                return tema.sections
+        return ()
 
     @staticmethod
     def _termos_da_tarefa(task: ResearchTask) -> tuple[tuple[str, ...], ...]:

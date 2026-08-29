@@ -643,6 +643,48 @@ documento com extração falha nunca era reprocessado, então ficaria
 permanentemente não citável depois que o extrator passou a existir; e "NÃO
 extraído" significava "falhou uma vez" em vez de "sem unidade hoje".
 
+### As seções do 10-K, e por que a busca mentia sem elas
+
+Um 10-K não tem `<h1>` — zero, conferido em 2 MB de HTML real. A estrutura só
+existe no texto, nos itens da Regulation S-K, e o problema é que cada item
+aparece **duas vezes**: no sumário e no corpo.
+
+Antes disso, a melhor evidência que a busca por "concorrência" devolvia era a
+palavra `COMPETITION` sozinha, vinda de `table[1]/tr[28]` — uma linha do
+índice. Um sistema que cita o sumário como argumento passa por fundamentado sem
+ser.
+
+A regra que separa os dois é **estrutural, não de formatação**:
+
+```
+índice      Item 1.  \n\n  Business     número SOZINHO no bloco
+cabeçalho   Item 1.Business \n\n         número e nome no MESMO bloco
+referência  ...conforme o Item 8 deste   não abre bloco
+```
+
+O índice separa número e título porque são células de uma tabela de duas
+colunas. Distinguir por negrito ou por "está numa tabela" seria inferência
+sobre como *aquele* emissor montou o arquivo, e quebraria no próximo.
+
+```bash
+pat evidence --cik 1065280 --query competition --as-of 2025-06-30 --section "Item 1A"
+```
+
+No 10-K de 2024 da Netflix: 13 seções detectadas, `Item 1A` com 75 KB de fatores
+de risco e `Item 7` com 37 KB de MD&A. O escopo de uma busca de riscos caiu de
+3.507 para 848 unidades.
+
+O extrator subiu para `html-blocks/v2` — o texto não mudou, o endereço que as
+unidades carregam mudou — e reprocessar cria unidades **ao lado** das antigas. O
+efeito colateral apareceu na primeira busca depois: a mesma passagem voltava
+duas vezes, com dois `unit_id`. Não é duplicata de dado, são duas leituras
+legítimas do mesmo blob; o que a busca não pode é apresentá-las como duas
+evidências. O escopo passa a ser uma versão de extrator por documento.
+
+**Limitação declarada:** as demonstrações financeiras e as notas vêm depois do
+último item e não têm marcador próprio, então ficam rotuladas com o último item
+detectado. O documento não publica essa fronteira, e inventar uma seria pior.
+
 ### Netflix, e a métrica que o sistema se recusa a calcular
 
 O segundo mapeamento americano (`mappings/us/netflix.toml`) existe em boa parte

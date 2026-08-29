@@ -70,6 +70,20 @@ class Theme:
     needs_corpus: bool = False
     depends_on: tuple[str, ...] = field(default=())
 
+    sections: tuple[str, ...] = ()
+    """Secoes do documento onde a busca deste tema faz sentido.
+
+    Vazio busca no documento inteiro, INCLUSIVE na capa e no indice - e foi
+    exatamente isso que fez a primeira busca real devolver a palavra
+    `COMPETITION` sozinha, de uma linha de sumario, como melhor evidencia sobre
+    concorrencia.
+
+    O endereco e o numero do item, e nao o nome: o nome vem da tabela do
+    regulador e pode ser reescrito; o numero e o que o proprio formulario
+    declara. Documento sem secao reconhecida ignora o filtro, o que mantem
+    citavel o que ainda nao tem estrutura.
+    """
+
     search_terms: tuple[tuple[str, ...], ...] = ()
     """Grupos de termos para buscar no corpus. Cada grupo vira UMA busca.
 
@@ -211,6 +225,11 @@ THEMES: tuple[Theme, ...] = (
         ),
         triggers=("risco", "negocio", "concorrencia", "drivers", "estrategia", "risk"),
         needs_corpus=True,
+        # Item 1A e a discussao de riscos; Item 7 e a discussao da
+        # administracao sobre o negocio. Sao as duas secoes que respondem
+        # "o que a companhia diz", e restringir a elas e o que impede o
+        # sumario de ganhar o ranking.
+        sections=("Item 1A", "Item 7", "Item 1"),
         search_terms=(
             ("competition",),
             ("risk", "factors"),

@@ -46,7 +46,14 @@ __all__ = [
 
 HTML_MEDIA_TYPE = "text/html"
 
-_ALGORITHM_VERSION = "1"
+_ALGORITHM_VERSION = "2"
+"""v2: as unidades passam a nascer com `section_path`.
+
+A versao sobe porque o CONTEUDO das unidades mudou - nao o texto, mas o
+endereco que elas carregam -, e a regra do projeto e que reprocessar cria
+unidades ao lado das antigas em vez de redefinir o que uma citacao queria
+dizer. Uma unidade v1 continua conferivel pelo extrator v1; ela so nao sabe
+em que secao estava."""
 _PY = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
 HTML_EXTRACTION_VERSION = f"html-blocks/v{_ALGORITHM_VERSION}+python{_PY}"

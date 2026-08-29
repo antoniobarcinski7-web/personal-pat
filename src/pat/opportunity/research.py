@@ -336,7 +336,7 @@ def _step_breakdown(tools: PatTools, step: StepRequest) -> StepOutcome:
 
 
 def _step_evidence(tools: PatTools, step: StepRequest) -> StepOutcome:
-    resultado = tools.evidence(step.terms, limit=step.limit)
+    resultado = tools.evidence(step.terms, sections=step.sections, limit=step.limit)
     if hasattr(resultado, "reason"):
         return StepOutcome(
             step_id=step.step_id,

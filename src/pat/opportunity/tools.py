@@ -326,6 +326,7 @@ class PatTools:
         kinds: tuple[DocumentKind, ...] = (),
         published_from: date | None = None,
         published_to: date | None = None,
+        sections: tuple[str, ...] = (),
         limit: int = DEFAULT_LIMIT,
     ):
         """Busca no corpus. `EvidenceResult` ou `EvidenceUnavailable`.
@@ -345,6 +346,7 @@ class PatTools:
                 kinds=kinds,
                 published_from=published_from,
                 published_to=published_to,
+                sections=sections,
                 limit=limit,
             ),
         )
