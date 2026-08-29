@@ -53,8 +53,17 @@ def _metric(step_id: str, ref: str = "margem_ebitda@v1", period_end=gpa.FY2023) 
 # -- metricas e referencias --------------------------------------------------
 
 
+METRICA_QUE_NAO_EXISTE = "metrica_inexistente@v1"
+"""Nome que o registro nunca vai ter.
+
+Antes era `roic@v1`, escolhido por ser plausivel e ausente - ate a N4
+registrar `roic@v1` de verdade, e os dois testes que dependiam da ausencia
+passarem a exercitar uma metrica existente. Um nome explicitamente
+inventado nao colide com nenhum milestone futuro."""
+
+
 def test_metrica_inexistente(question, registry):
-    plano = make_plan(question, steps=(_metric("a", "roic@v1"),), outputs=("a",))
+    plano = make_plan(question, steps=(_metric("a", METRICA_QUE_NAO_EXISTE),), outputs=("a",))
     assert ViolationCode.UNKNOWN_METRIC in _codes(plano, question, registry)
 
 
@@ -240,7 +249,7 @@ def test_validador_reporta_todas_as_violacoes(question, registry):
     plano = make_plan(
         question,
         as_of=date(2024, 6, 30),
-        steps=(_metric("a", "roic@v1"),),
+        steps=(_metric("a", METRICA_QUE_NAO_EXISTE),),
         outputs=("fantasma",),
     )
     codigos = _codes(plano, question, registry)

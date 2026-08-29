@@ -428,6 +428,23 @@ class MetricDefinition(Frozen):
     dimension: Dimension
     period_kind: PeriodKind
 
+    mixes_period_kinds: bool = False
+    """A metrica combina insumo de FLUXO com insumo de SALDO, de proposito.
+
+    Por default o motor RECUSA a mistura, e a recusa e a coisa certa na quase
+    totalidade dos casos: somar um fluxo do exercicio a um saldo pontual e uma
+    grandeza que nao existe.
+
+    Dividir um pelo outro, porem, e exatamente o que um retorno sobre capital
+    e - `roe@v1` e resultado do periodo sobre patrimonio da data-base. A
+    excecao e DECLARADA por metrica, e nao inferida da dimensao: uma razao
+    tambem pode ser uma mistura sem sentido, e deixar `RATIO` liberar
+    automaticamente trocaria uma checagem por uma coincidencia de tipo.
+
+    Quando verdadeiro, o resultado herda o periodo do insumo de FLUXO - a
+    metrica descreve um periodo, e nao uma data.
+    """
+
     requires_concepts: tuple[str, ...] = ()
     requires_metrics: tuple[MetricRef, ...] = ()
     optional_concepts: tuple[str, ...] = Field(

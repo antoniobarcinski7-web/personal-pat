@@ -124,6 +124,16 @@ def test_registro_embutido_e_valido():
         "fluxo_de_caixa_operacional@v1",
         "capex@v1",
         "fcf@v1",
+        # Patrimonio e retorno ao acionista
+        "patrimonio_liquido@v1",
+        "dividendos_pagos@v1",
+        "recompras@v1",
+        "retorno_ao_acionista@v1",
+        # Retorno sobre o capital
+        "roe@v1",
+        "aliquota_efetiva@v1",
+        "capital_investido@v1",
+        "roic@v1",
     }
 
 

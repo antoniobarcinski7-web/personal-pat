@@ -42,6 +42,16 @@ LEASE_LIABILITY_NONCURRENT = "lease_liability_noncurrent"
 CASH_FLOW_OPERATING = "cash_flow_operating"
 CAPEX = "capex"
 
+# Patrimonio, retorno ao acionista e a carga tributaria. Sao os conceitos
+# que faltavam para sair de 'quanto a companhia gera' e chegar em 'quanto
+# vale o capital empregado', e para fechar a alocacao de capital: sem eles,
+# o caixa gerado some do relatorio depois do capex.
+EQUITY_CONTROLLING = "equity_controlling"
+DIVIDENDS_PAID = "dividends_paid"
+SHARE_REPURCHASES = "share_repurchases"
+INCOME_TAX_EXPENSE = "income_tax_expense"
+PRETAX_INCOME = "pretax_income"
+
 
 _CATALOG: tuple[Concept, ...] = (
     Concept(
@@ -331,6 +341,105 @@ _CATALOG: tuple[Concept, ...] = (
             "resolvido aqui: em alguns emissores ele e ativo intangivel e em "
             "outros e custo de receita. Onde a distincao importar, o mapeamento "
             "declara o que entrou, com `divergence_note`.",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # Patrimonio e retorno ao acionista
+    # -----------------------------------------------------------------------
+    Concept(
+        concept_id=EQUITY_CONTROLLING,
+        label_en="Equity attributable to owners of the parent",
+        definition=(
+            "Patrimonio liquido atribuivel aos socios da controladora na "
+            "data-base, depois de deduzida a participacao de nao controladores."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.STOCK,
+        sign_convention="positivo = patrimonio",
+        boundary_notes=(
+            "ATRIBUIVEL A CONTROLADORA, pela mesma decisao A3 que separa "
+            "`net_income_controlling` do resultado total. O par importa: quem "
+            "calcula retorno sobre o capital DO ACIONISTA precisa que numerador e "
+            "denominador falem do mesmo acionista, e misturar um resultado "
+            "atribuivel com um patrimonio total produz um ROE que nao e de "
+            "ninguem.",
+            "Patrimonio negativo e possivel e informativo - recompra agressiva ou "
+            "prejuizo acumulado -, e atravessa o sistema sem tratamento especial. "
+            "O que ele torna sem sentido e a RAZAO que o usa como denominador, e "
+            "isso e problema da metrica, nao do conceito.",
+        ),
+    ),
+    Concept(
+        concept_id=DIVIDENDS_PAID,
+        label_en="Dividends paid",
+        definition=(
+            "Caixa desembolsado com dividendos e juros sobre capital proprio no "
+            "periodo, como apresentado nas atividades de financiamento."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = saida de caixa",
+        boundary_notes=(
+            "PAGO, e nao declarado. A diferenca e de periodo e as duas grandezas "
+            "circulam com o mesmo nome: o declarado pertence ao exercicio que o "
+            "gerou, o pago ao exercicio em que saiu do caixa. Aqui e caixa, "
+            "porque e o que se compara com o FCF que o financiou.",
+            "Companhia que nao paga dividendo nao tem esta linha, e a ausencia e "
+            "FATO sobre a companhia - nao lacuna do sistema. O mapeamento dela "
+            "simplesmente nao liga o conceito, e a metrica recusa dizendo isso.",
+        ),
+    ),
+    Concept(
+        concept_id=SHARE_REPURCHASES,
+        label_en="Share repurchases",
+        definition=(
+            "Caixa desembolsado na recompra de acoes proprias no periodo, como "
+            "apresentado nas atividades de financiamento."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = saida de caixa",
+        boundary_notes=(
+            "Fluxo de CAIXA da recompra, e nao a variacao do saldo de acoes em "
+            "tesouraria: a segunda muda com cancelamento e com reemissao, e "
+            "produziria uma 'recompra' que nao e caixa nenhum - o mesmo erro de "
+            "ler capex pela variacao do imobilizado.",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # Carga tributaria - insumo do retorno sobre o capital
+    # -----------------------------------------------------------------------
+    Concept(
+        concept_id=INCOME_TAX_EXPENSE,
+        label_en="Income tax expense",
+        definition=(
+            "Despesa com imposto de renda e contribuicao social do periodo, "
+            "corrente e diferida, como reconhecida no resultado."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = despesa",
+        boundary_notes=(
+            "Despesa RECONHECIDA, e nao imposto pago. A diferenca e o diferido, e "
+            "ela e grande em companhia com prejuizo fiscal acumulado.",
+            "Pode ser NEGATIVA - beneficio fiscal -, e nesse caso a aliquota "
+            "efetiva tambem e, o que e informacao e nao erro.",
+        ),
+    ),
+    Concept(
+        concept_id=PRETAX_INCOME,
+        label_en="Income before income taxes",
+        definition=(
+            "Resultado do periodo antes do imposto de renda e da contribuicao "
+            "social, depois do resultado financeiro."
+        ),
+        dimension=Dimension.MONEY,
+        period_kind=PeriodKind.FLOW,
+        sign_convention="positivo = lucro",
+        boundary_notes=(
+            "Existe para ser o denominador da aliquota efetiva. Nao e EBIT: "
+            "aquele para antes do resultado financeiro, e usar um pelo outro "
+            "produziria uma aliquota que nao se aplica a nada.",
         ),
     ),
 )

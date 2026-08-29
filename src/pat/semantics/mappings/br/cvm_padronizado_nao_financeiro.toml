@@ -281,3 +281,82 @@ cd_conta  = "6.01"
 sign      = 1
 label_as_reported = "Caixa Líquido Atividades Operacionais"
 
+# ---------------------------------------------------------------------------
+# Patrimonio e carga tributaria
+#
+# Dividendo e recompra NAO entram na familia: a DFC padronizada da CVM nao
+# normaliza os codigos das atividades de financiamento - eles vivem em 6.03.xx
+# com numeracao livre por companhia, como o capex em 6.02.xx. Companhia que
+# quiser `dividendos_pagos@v1` ou `recompras@v1` declara o endereco no
+# mapeamento proprio.
+# ---------------------------------------------------------------------------
+
+[[binding]]
+concept_id = "equity_controlling"
+fidelity   = "exact"
+equivalence_basis = """
+A CVM publica 2.03 como patrimonio liquido CONSOLIDADO - incluindo nao \
+controladores - e 2.03.09 como a participacao deles. O atribuivel a \
+controladora e a diferenca, e este binding a monta somando as duas linhas \
+publicadas: 2.03 com sign=+1 e 2.03.09 com sign=-1.
+
+Somar linhas publicadas e diferente de estimar: as duas existem na peca, e a \
+subtracao e a que a propria CVM apresenta na hierarquia do plano.
+
+E a mesma decisao A3 que separa `net_income_controlling` de `ProfitLoss` no \
+lado americano - so que aqui a linha atribuivel nao e publicada em separado, e \
+por isso ela e composta em vez de lida.
+
+Conferido no GPA em 2024-12-31: 2.935 - 9 = 2.926 MM.
+"""
+[[binding.line]]
+statement = "BPP"
+cd_conta  = "2.03"
+sign      = 1
+label_as_reported = "Patrimônio Líquido Consolidado"
+[[binding.line]]
+statement = "BPP"
+cd_conta  = "2.03.09"
+sign      = -1
+label_as_reported = "Participação dos Acionistas Não Controladores"
+
+[[binding]]
+concept_id = "pretax_income"
+fidelity   = "exact"
+equivalence_basis = """
+3.07 e "Resultado Antes dos Tributos sobre o Lucro" - depois do resultado \
+financeiro e antes do imposto. Positivo na origem quando ha lucro, ja na \
+convencao do conceito.
+
+NAO e 3.05 (o EBIT): aquele para antes do resultado financeiro, e usar um pelo \
+outro produziria uma aliquota efetiva que nao se aplica a nada.
+
+Conferido no GPA em FY2024: -1.677 MM. Negativo, e por isso \
+`aliquota_efetiva@v1` recusa naquele exercicio - aliquota sobre prejuizo nao \
+tem leitura.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.07"
+sign      = 1
+label_as_reported = "Resultado Antes dos Tributos sobre o Lucro"
+
+[[binding]]
+concept_id = "income_tax_expense"
+fidelity   = "exact"
+equivalence_basis = """
+3.08 e "Imposto de Renda e Contribuicao Social sobre o Lucro", corrente mais \
+diferido. A CVM publica com sinal NEGATIVO quando ha despesa - e uma reducao \
+do resultado -, e a convencao do conceito e "positivo = despesa". Sign=-1 \
+normaliza.
+
+Conferido no GPA em FY2024: 12 MM publicados, ou seja BENEFICIO de 12 MM, que \
+entra como -12 MM de despesa. Beneficio fiscal e resultado valido e atravessa \
+o sistema sem tratamento especial.
+"""
+[[binding.line]]
+statement = "DRE"
+cd_conta  = "3.08"
+sign      = -1
+label_as_reported = "Imposto de Renda e Contribuição Social sobre o Lucro"
+

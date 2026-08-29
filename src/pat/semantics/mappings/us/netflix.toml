@@ -343,6 +343,85 @@ sign      = 1
 label_as_reported = "Purchases of property and equipment"
 
 # ---------------------------------------------------------------------------
+# Patrimonio e retorno ao acionista
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "equity_controlling"
+fidelity   = "exact"
+equivalence_basis = """
+`StockholdersEquity` e, no us-gaap, o patrimonio ATRIBUIVEL AOS SOCIOS DA \
+CONTROLADORA. O total, incluindo nao controladores, e \
+`StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` - a \
+mesma armadilha de nomenclatura de `NetIncomeLoss` contra `ProfitLoss`, e a \
+mesma decisao A3 resolve as duas.
+
+A Netflix nao tem participacao de nao controladores material, entao os dois \
+coincidem. Coincidir hoje nao e ser a mesma coisa, e uma aquisicao futura \
+separaria os dois sem avisar ninguem.
+
+Conferido: 2023-12-31 US$ 20.588,0 MM, 2024-12-31 US$ 24.743,6 MM.
+"""
+[[binding.line]]
+element   = "StockholdersEquity"
+statement = "balance"
+sign      = 1
+label_as_reported = "Total stockholders' equity"
+
+[[binding]]
+concept_id = "share_repurchases"
+fidelity   = "exact"
+equivalence_basis = """
+`PaymentsForRepurchaseOfCommonStock` e o desembolso com recompra de acoes nas \
+atividades de financiamento. Publicado POSITIVO (elemento de "payments"), ja \
+na convencao do conceito.
+
+NAO usar `TreasuryStockValueAcquiredCostMethod`, que a Netflix tambem publica: \
+aquele e saldo de acoes em tesouraria pelo custo, e muda com cancelamento e \
+reemissao. Le-lo como recompra produziria um numero que nao e caixa - o mesmo \
+erro de ler capex pela variacao do imobilizado.
+"""
+[[binding.line]]
+element   = "PaymentsForRepurchaseOfCommonStock"
+statement = "cash_flow"
+sign      = 1
+label_as_reported = "Repurchases of common stock"
+
+# ---------------------------------------------------------------------------
+# Carga tributaria
+# ---------------------------------------------------------------------------
+[[binding]]
+concept_id = "income_tax_expense"
+fidelity   = "exact"
+equivalence_basis = """
+`IncomeTaxExpenseBenefit` e a despesa de imposto do periodo, corrente mais \
+diferida, como reconhecida no resultado. Publicada POSITIVA quando ha despesa, \
+ja na convencao do conceito.
+"""
+[[binding.line]]
+element   = "IncomeTaxExpenseBenefit"
+statement = "income"
+sign      = 1
+label_as_reported = "Provision for income taxes"
+
+[[binding]]
+concept_id = "pretax_income"
+fidelity   = "exact"
+equivalence_basis = """
+`IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest` \
+e o resultado antes dos tributos - o nome longo e do us-gaap, nao uma escolha \
+deste arquivo.
+
+E o denominador da aliquota efetiva, e NAO e o EBIT: este ja passou pelo \
+resultado financeiro. Usar um pelo outro produziria uma aliquota que nao se \
+aplica a nada.
+"""
+[[binding.line]]
+element   = "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"
+statement = "income"
+sign      = 1
+label_as_reported = "Income before income taxes"
+
+# ---------------------------------------------------------------------------
 # O QUE NAO ESTA LIGADO, E POR QUE
 # ---------------------------------------------------------------------------
 #
@@ -383,6 +462,17 @@ label_as_reported = "Purchases of property and equipment"
 # O que destravaria: ler a taxonomia `nflx:` no ingestor, ou usar o Financial
 # Statement Data Set (DERA), que traz a linha de amortizacao de conteudo. As
 # duas sao mudanca de engenharia, e nenhuma se resolve neste arquivo.
+#
+# dividends_paid
+# --------------
+# A Netflix NAO paga dividendo, e nunca pagou. Nao ha linha porque nao ha
+# desembolso - ausencia que e FATO sobre a companhia, e nao lacuna do sistema.
+#
+# `dividendos_pagos@v1` recusa nomeando o conceito, e `retorno_ao_acionista@v1`
+# recusa junto. Isso e deliberado: apresentar so a recompra sob o nome "retorno
+# ao acionista" diria que o dividendo e zero calculado, quando o correto e que
+# ele nao existe como linha. A recompra isolada continua disponivel em
+# `recompras@v1`, e e ela que responde a pergunta de alocacao de capital aqui.
 #
 # segmentos
 # ---------

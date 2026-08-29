@@ -441,13 +441,23 @@ class Engine:
             for cid, cv in concept_values.items()
             if cid in definition.requires_concepts
         } | {r.period_start for r in dep_results.values()}
-        if len(period_types) > 1:
+        if len(period_types) > 1 and not definition.mixes_period_kinds:
             result = fail(
                 reason=UnavailableReason.WRONG_PERIOD_TYPE,
                 message=f"insumos com tipos de periodo diferentes: {sorted(period_types)}",
             )
             cache[key] = result
             return result
+        if len(period_types) > 1:
+            # Mistura DECLARADA: o resultado herda o periodo do insumo de
+            # fluxo, porque a metrica descreve um periodo e nao uma data. Um
+            # ROE carimbado como INSTANT diria que o lucro do exercicio
+            # aconteceu num dia.
+            fluxos = {t for t in period_types if t is not PeriodType.INSTANT}
+            period_types = fluxos or period_types
+            period_starts = {
+                inicio for inicio in period_starts if inicio is not None
+            } or period_starts
 
         # -- calculo --------------------------------------------------------
         try:

@@ -79,6 +79,11 @@ _DRE_2024 = [
     _line("3.04", "Despesas/Receitas Operacionais", "-5608000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
     _line("3.04.06", "Resultado de Equivalência Patrimonial", "64000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
     _line("3.05", "Resultado Antes do Resultado Financeiro e dos Tributos", "-436000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    # Insumos da aliquota efetiva. O GPA teve PREJUIZO antes dos tributos em
+    # FY2024, e por isso `aliquota_efetiva@v1` recusa nesse exercicio - o que e
+    # o comportamento certo, e o que o teste confere.
+    _line("3.07", "Resultado Antes dos Tributos sobre o Lucro", "-1677000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    _line("3.08", "Imposto de Renda e Contribuição Social sobre o Lucro", "12000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
     # FY2023 reapresentado:
     _line("3.01", "Receita de Venda de Bens e/ou Serviços", "17793000", "2023-12-31", "2023-01-01", "PENÚLTIMO"),
     _line("3.02", "Custo dos Bens e/ou Serviços Vendidos", "-13096000", "2023-12-31", "2023-01-01", "PENÚLTIMO"),
@@ -112,6 +117,11 @@ _BPA_2024 = [
 _BPP_2024 = [
     _line("2.01.04", "Empréstimos e Financiamentos", "849000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
     _line("2.02.01", "Empréstimos e Financiamentos", "3196000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    # A CVM publica o patrimonio CONSOLIDADO e a participacao de nao
+    # controladores em separado; o atribuivel a controladora e a diferenca, e o
+    # binding a monta somando as duas linhas publicadas.
+    _line("2.03", "Patrimônio Líquido Consolidado", "2935000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
+    _line("2.03.09", "Participação dos Acionistas Não Controladores", "9000", "2024-12-31", "2024-01-01", "ÚLTIMO"),
 ]
 
 
