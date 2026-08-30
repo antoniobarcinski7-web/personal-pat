@@ -250,7 +250,35 @@ def cmd_opp_chat(args) -> int:
 
 
 def _turno(agente: ChatAgent, texto: str) -> int:
-    resposta = agente.respond(TurnRequest(text=texto, workspace_id=agente.workspace.workspace_id))
+    from pat.opportunity.llm_reasoner import LlmReasonerError
+    from pat.research.llm import LLMError
+
+    try:
+        resposta = agente.respond(
+            TurnRequest(text=texto, workspace_id=agente.workspace.workspace_id)
+        )
+    except (LlmReasonerError, LLMError) as exc:
+        # As duas ja sao recusas NOMEADAS - foi para isso que ganharam nome. O
+        # traceback em volta so afasta a linha util do fim da tela, e quem
+        # digitou o comando nao tem o que fazer com a pilha.
+        print(f"o raciocinador parou: {exc}", file=sys.stderr)
+        # `detail` diz QUAL campo o modelo errou. Sem ele, "contract_violation:
+        # 1 erro(s)" e um sintoma sem sintoma - manda depurar prompt as cegas.
+        detalhe = getattr(exc, "detail", None)
+        if detalhe:
+            print(f"\n{detalhe}", file=sys.stderr)
+        # Preciso, e nao tranquilizador: `respond` so grava o turno depois de
+        # `_handle` voltar, entao ESTE turno nao existe. O que tiver sido
+        # concluido antes da falha - tarefa criada, tarefa que rodou inteira -
+        # ja esta no diario, e dizer "nada foi gravado" mandaria alguem
+        # procurar um estado limpo que nao esta la.
+        print(
+            "\nEste turno nao foi gravado. O que ja tinha concluido antes da "
+            "falha continua no diario - veja com `opportunity status`.",
+            file=sys.stderr,
+        )
+        print("Para seguir sem modelo: --reasoner shape", file=sys.stderr)
+        return 1
     print(resposta.text)
     if resposta.disagreement:
         print()

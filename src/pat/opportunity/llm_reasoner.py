@@ -79,9 +79,30 @@ __all__ = [
     "build_plan_prompt",
 ]
 
-DEFAULT_MAX_TOKENS = 4096
-DEFAULT_TEMPERATURE = Decimal("0")
+DEFAULT_MAX_TOKENS = 16384
+"""4096 nao dava. A primeira decomposicao real da Netflix truncou no meio do
+JSON - sete tarefas com criterio de conclusao escrito, mais hipoteses com
+falsificador, passam folgado de quatro mil tokens.
+
+O teto e generoso de proposito: o custo de um teto alto e pagar pelo que foi
+gerado, e o custo de um teto baixo e uma investigacao que morre no meio depois
+de ja ter chamado o modelo. O segundo e pior, e ainda cobra pela geracao
+truncada.
+"""
+
 DEFAULT_TIMEOUT_S = 120
+
+DEFAULT_TEMPERATURE: Decimal | None = None
+"""Nao enviado por default, porque os modelos atuais recusam o parametro:
+`claude-opus-5` responde 400 `temperature is deprecated for this model`.
+
+Nao e perda. A reprodutibilidade deste sistema nunca veio de `temperature=0` -
+ela vem de o modelo nao produzir numero nenhum. Duas execucoes podem escrever
+a mesma coisa com outras palavras e propor a agenda em outra ordem; o que nao
+muda e o valor, porque quem calcula e o motor. `None` tambem e omitido da forma
+canonica de `LLMRequest`, entao o `prompt_sha256` nao passa a depender de um
+campo que nao foi enviado.
+"""
 
 REASONER_VERSION = "v1"
 
