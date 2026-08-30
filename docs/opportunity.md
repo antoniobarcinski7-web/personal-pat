@@ -83,6 +83,52 @@ Apagar `data/opportunity/` perde a investigação inteira. Ao contrário de
 
 ---
 
+## Rodando o `pat`
+
+Neste worktree o console script instalado pelo `uv` não funciona: o Python 3.14
+ignora arquivos `.pth` marcados com a flag `UF_HIDDEN` do macOS, e o pacote
+nunca entra no `sys.path`. Use o wrapper na raiz, que ancora no diretório certo
+e funciona de qualquer lugar:
+
+```bash
+./pat opportunity list
+/caminho/para/phase5/pat opportunity status --workspace ID
+```
+
+Um alias deixa o resto deste guia literal:
+
+```bash
+alias pat='/Users/você/.../worktrees/phase5/pat'
+```
+
+---
+
+## Quem raciocina
+
+Duas escolhas, e a diferença aparece na resposta:
+
+```bash
+pat opportunity chat "..."                  # shape: tabela, sem rede, sem custo
+pat opportunity chat "..." --reasoner llm   # modelo: prosa que argumenta
+```
+
+`shape` é o piso e o default: planeja por tabela declarada, descreve a **forma**
+de uma série — direção, magnitude, reversões — e nunca diz por quê. Roda sem
+chave e sem custo.
+
+`llm` é o andar de cima. Ele lê os resultados, liga séries que se movem juntas,
+nota o que a administração afirma, e propõe **hipótese com falsificador** — que
+uma regra não propõe, porque proporia a mesma para toda empresa. Exige
+`ANTHROPIC_API_KEY` no ambiente ou no Keychain (ver README), e uma agenda
+inteira leva vários minutos, porque é uma chamada de modelo por passo.
+
+Não há queda silenciosa de um para o outro. Se o modelo falhar, você vê a recusa
+nomeada — nunca metade de uma investigação apresentada como inteira. O
+`reasoner_id` no relatório diz quem concluiu o quê, porque uma conclusão de
+regra e uma conclusão de modelo têm forças diferentes.
+
+---
+
 ## Começando uma investigação
 
 ```bash
