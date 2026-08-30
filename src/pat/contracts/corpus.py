@@ -532,6 +532,20 @@ class EvidenceUnavailableReason(StrEnum):
     NO_DOCUMENTS_FOR_ENTITY = "no_documents_for_entity"
     NO_DOCUMENTS_AS_OF = "no_documents_as_of"
     NO_UNITS_EXTRACTED = "no_units_extracted"
+
+    NO_UNITS_IN_FILTER = "no_units_in_filter"
+    """O corpus esta extraido; o FILTRO da consulta e que nao casou.
+
+    Existe porque sem ele os dois casos saiam como `NO_UNITS_EXTRACTED`, e o
+    remedio de um ("rode `pat docs sync`") manda consertar o que nao esta
+    quebrado quando o problema e o outro. Pedir a secao "Fatores de Risco" num
+    10-K cujo `section_path` diz "Item 1A" nao casa nada - e o corpus tem 584
+    unidades exatamente ali.
+
+    Erro caro porque e convincente: quem le "nenhum documento com unidade
+    extraida" reingere o corpus inteiro e a busca continua vazia, porque nunca
+    foi disso que se tratava."""
+
     NO_MATCH = "no_match"
     INDEX_MISSING = "index_missing"
 

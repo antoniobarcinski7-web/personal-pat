@@ -319,6 +319,19 @@ class PatTools:
 
     # -- texto ---------------------------------------------------------------
 
+    def sections(self) -> tuple[str, ...]:
+        """As secoes que o corpus desta empresa declara.
+
+        Existe para que quem planeja um passo de evidencia ESCOLHA a secao em
+        vez de adivinhar o nome dela. E a mesma razao de `metrics_available`:
+        um raciocinador que inventa o endereco recebe uma recusa correta e
+        conclui que nao ha texto, quando ha - so nao com o nome que ele
+        chutou.
+        """
+        from pat.corpus.retrieve import sections_for
+
+        return sections_for(self._conn, entity_id=self._context.entity_id, as_of=self._context.as_of)
+
     def evidence(
         self,
         terms: tuple[str, ...],

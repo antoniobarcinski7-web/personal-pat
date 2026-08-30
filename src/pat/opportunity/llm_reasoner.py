@@ -202,6 +202,7 @@ def _contexto_json(context: ResearchContext) -> dict:
         "periodos_anuais": _datas(context.annual_periods),
         "periodos_instantaneos": _datas(context.instant_periods),
         "documentos_no_corpus": context.documents,
+        "secoes_disponiveis": list(context.sections_available),
         "conceitos_ausentes": list(context.missing_concepts),
         "perguntas_abertas": list(context.open_questions),
     }
@@ -237,6 +238,9 @@ def build_plan_prompt(*, task: ResearchTask, context: ResearchContext) -> str:
         '- "metric": exige `ref` ("nome@versao") e `period_ends` (lista de datas).\n'
         '- "breakdown": exige `ref`, `period_from` e `period_to`.\n'
         '- "evidence": exige `terms` (lista). Aceita `sections` e `limit`.\n'
+        "  `sections` so aceita valores de `secoes_disponiveis` - o caminho casa "
+        "pelo item do formulario, nao pelo titulo dele. Na duvida, omita: sem "
+        "`sections` a busca cobre o documento inteiro.\n\n"
         '- "accounts": exige `statement` e `period_ends`.\n\n'
         "Peca metrica de fluxo (receita, EBITDA, lucro) nos periodos anuais e "
         "metrica de saldo (caixa, divida, patrimonio) nos instantaneos. Peca "

@@ -120,6 +120,7 @@ def build_context(workspace: Workspace, tools: PatTools) -> ResearchContext:
         mandate=estado.workspace.mandate,
         annual_periods=tools.periods_of_type("year"),
         instant_periods=tools.periods_of_type("instant"),
+        sections_available=tools.sections(),
     )
 
 

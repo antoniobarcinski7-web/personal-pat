@@ -96,6 +96,18 @@ class ResearchContext:
     instant_periods: tuple[date, ...] = ()
     """Datas-base de saldo. Conceito STOCK resolve nelas."""
 
+    sections_available: tuple[str, ...] = ()
+    """Os enderecos de secao que o corpus desta empresa declara.
+
+    Pelo mesmo motivo de `metrics_available`: quem planeja ESCOLHE o endereco
+    de uma lista em vez de chutar o titulo. O caminho de secao e opaco - vem do
+    formulario que a companhia preencheu - e um raciocinador que pede a secao
+    pelo nome que ela tem na cabeca dele recebe uma recusa correta e conclui
+    que nao ha texto, quando ha, so nao sob aquele nome.
+
+    E o mesmo erro de casar conta por rotulo, do lado textual.
+    """
+
     @property
     def has_corpus(self) -> bool:
         return self.documents > 0

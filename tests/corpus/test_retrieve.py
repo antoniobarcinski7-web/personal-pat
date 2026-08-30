@@ -22,7 +22,7 @@ from pat.contracts.corpus import (
 )
 from pat.corpus.extract import extract
 from pat.corpus.index import INDEX_VERSION, build_index, tokenize
-from pat.corpus.retrieve import retrieve
+from pat.corpus.retrieve import retrieve, sections_for
 from pat.store import corpus as corpus_store
 from pat.store.db import migrate
 from tests.corpus.conftest import make_document, make_pdf
@@ -271,3 +271,54 @@ def test_numeros_de_periodo_sao_termos_de_busca():
     tokens = tokenize("resultado do 3T24 em 2024")
     assert "3t24" in tokens
     assert "2024" in tokens
+
+
+# -- filtro que nao casa nao e corpus quebrado ------------------------------
+
+
+def test_secao_inexistente_nao_se_confunde_com_corpus_nao_extraido(corpus):
+    """Os dois casos chegam como "zero unidades", e os remedios sao opostos.
+
+    Sob um nome so, quem pede a secao pelo titulo em vez do endereco reingere o
+    corpus inteiro - e a busca continua vazia, porque nunca foi disso que se
+    tratava. E um achado convincente e errado, que e o pior tipo.
+    """
+    resultado = retrieve(
+        corpus,
+        EvidenceQuery(
+            entity_id=ENTIDADE,
+            as_of=date(2025, 1, 1),
+            terms=("brent",),
+            sections=("Secao Que Nao Existe",),
+        ),
+    )
+
+    assert isinstance(resultado, EvidenceUnavailable)
+    assert resultado.reason is EvidenceUnavailableReason.NO_UNITS_IN_FILTER
+    # O remedio precisa dizer QUAIS existem: mandar adivinhar nome de secao e o
+    # analogo textual de mandar adivinhar codigo de conta.
+    assert "As secoes deste corpus sao" in (resultado.remedy or "")
+    assert "docs sync" not in (resultado.remedy or "")
+
+
+def test_sections_for_devolve_o_que_a_busca_aceitaria(corpus):
+    """A lista oferecida a quem planeja passa pelo MESMO `_scope` da busca.
+
+    Duas implementacoes do corte bitemporal divergiriam, e a divergencia
+    apareceria como uma secao oferecida a quem planeja e negada a quem busca.
+    """
+    as_of = date(2025, 1, 1)
+    secoes = sections_for(corpus, entity_id=ENTIDADE, as_of=as_of)
+
+    for secao in secoes:
+        resultado = retrieve(
+            corpus,
+            EvidenceQuery(
+                entity_id=ENTIDADE, as_of=as_of, terms=("brent",), sections=(secao,)
+            ),
+        )
+        motivo = getattr(resultado, "reason", None)
+        assert motivo is not EvidenceUnavailableReason.NO_UNITS_IN_FILTER, (
+            f"secao {secao!r} foi oferecida por `sections_for` e recusada pela busca"
+        )
+

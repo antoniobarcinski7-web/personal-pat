@@ -47,7 +47,7 @@ from pat.contracts.common import SourceTier
 from pat.corpus.identity import query_id
 from pat.corpus.index import INDEX_VERSION, bm25, tokenize
 
-__all__ = ["retrieve"]
+__all__ = ["retrieve", "sections_for"]
 
 
 def retrieve(
@@ -81,6 +81,40 @@ def retrieve(
         )
 
     units = _units_in_scope(conn, document_ids, query)
+    if not units and (query.sections or query.speaker_roles):
+        # Antes de culpar a extracao, conferir se o FILTRO foi quem esvaziou.
+        #
+        # Os dois casos chegam aqui como "zero unidades", e os remedios sao
+        # opostos: um pede reingestao e o outro pede outro nome de secao. Sob
+        # um nome so, quem pede "Fatores de Risco" num 10-K que diz "Item 1A"
+        # reingere o corpus inteiro e a busca continua vazia - porque nunca foi
+        # disso que se tratava.
+        sem_filtro = _units_in_scope(
+            conn,
+            document_ids,
+            query.model_copy(update={"sections": (), "speaker_roles": ()}),
+        )
+        if sem_filtro:
+            secoes = _sections_in_scope(conn, document_ids)
+            return EvidenceUnavailable(
+                reason=EvidenceUnavailableReason.NO_UNITS_IN_FILTER,
+                message=(
+                    f"{len(sem_filtro)} unidade(s) extraida(s) em "
+                    f"{len(document_ids)} documento(s), nenhuma dentro do filtro "
+                    f"pedido (secoes={list(query.sections)})"
+                ),
+                entity_id=query.entity_id,
+                as_of=query.as_of,
+                remedy=(
+                    "As secoes deste corpus sao: "
+                    + (", ".join(secoes) if secoes else "(nenhuma declarada)")
+                    + ". O caminho casa pelo item do formulario - 'Item 1A' -, e "
+                    "nao pelo titulo dele. Sem `sections`, a busca cobre o "
+                    "documento inteiro."
+                ),
+                documents_in_scope=len(document_ids),
+                documents_excluded_by_as_of=excluded_by_as_of,
+            )
     if not units:
         return EvidenceUnavailable(
             reason=EvidenceUnavailableReason.NO_UNITS_EXTRACTED,
@@ -302,6 +336,46 @@ def _units_in_scope(
         params,
     ).fetchall()
     return {row[0]: _Unit(row) for row in rows}
+
+
+def sections_for(
+    conn: duckdb.DuckDBPyConnection, *, entity_id: str, as_of: date
+) -> tuple[str, ...]:
+    """As secoes que o corpus desta empresa declara, ate o `as_of`.
+
+    Passa pelo MESMO `_scope` da busca - e nao por um SELECT proprio - para que
+    o corte bitemporal seja um so. Duas implementacoes do corte divergiriam, e
+    a divergencia apareceria como uma secao oferecida a quem planeja e negada a
+    quem busca.
+    """
+    escopo = _scope(
+        conn, EvidenceQuery(entity_id=entity_id, as_of=as_of, terms=("x",))
+    )
+    if isinstance(escopo, EvidenceUnavailable):
+        return ()
+    document_ids, _ = escopo
+    return _sections_in_scope(conn, document_ids)
+
+
+def _sections_in_scope(
+    conn: duckdb.DuckDBPyConnection, document_ids: list[str]
+) -> tuple[str, ...]:
+    """As secoes que os documentos no escopo de fato declaram.
+
+    Serve so para a mensagem de recusa. Uma recusa que diz "essa secao nao
+    existe" sem dizer quais existem manda adivinhar, e adivinhar nome de secao
+    e como adivinhar nome de conta.
+    """
+    placeholders = ", ".join("?" * len(document_ids))
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT section_path[1] FROM document_unit
+        WHERE document_id IN ({placeholders}) AND len(section_path) > 0
+        ORDER BY 1
+        """,
+        document_ids,
+    ).fetchall()
+    return tuple(r[0] for r in rows if r[0])
 
 
 def _query_tokens(query: EvidenceQuery) -> tuple[str, ...]:
