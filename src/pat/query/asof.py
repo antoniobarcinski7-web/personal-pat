@@ -424,7 +424,16 @@ class AsOf:
         periods = self.conn.execute(
             f"""
             SELECT DISTINCT period_end FROM gold_fact
-            WHERE entity_id = ? {predicate}
+            WHERE entity_id = ?
+              -- Mesmo corte de `period_ends_of_type`, e aqui ele pesa mais.
+              --
+              -- Uma serie de precos de cinco anos sao 1.255 fatos instantaneos.
+              -- Sem o corte, "periodos cobertos" viraria 1.255, e uma companhia
+              -- sem arquivamento nenhum passaria no piso de MIN_PERIODS por ter
+              -- cotacao - uma cobertura que parece excelente e nao tem uma
+              -- demonstracao dentro.
+              AND statement NOT LIKE 'market.%'
+              {predicate}
             ORDER BY period_end
             """,
             params,

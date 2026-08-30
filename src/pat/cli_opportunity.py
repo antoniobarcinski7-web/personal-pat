@@ -230,7 +230,7 @@ def cmd_opp_chat(args) -> int:
         return 1
     tools, conn = aberto
     try:
-        agente = ChatAgent(workspace, tools, ShapeReasoner())
+        agente = ChatAgent(workspace, tools, _reasoner(args))
         if args.text:
             return _turno(agente, " ".join(args.text))
         print(
@@ -286,7 +286,7 @@ def cmd_opp_research(args) -> int:
         return 1
     tools, conn = aberto
     try:
-        reasoner = ShapeReasoner()
+        reasoner = _reasoner(args)
         criados = plan_agenda(
             workspace, tools, reasoner, objective=args.objective, actor=Actor.AGENT
         )
@@ -561,6 +561,53 @@ def cmd_opp_thesis(args) -> int:
 # ---------------------------------------------------------------------------
 
 
+DEFAULT_REASONER_MODEL = "claude-opus-5"
+
+
+def _add_reasoner_args(p) -> None:
+    """As opcoes de quem raciocina, num lugar so.
+
+    `shape` continua o default. Nao por conservadorismo: e o unico que roda sem
+    chave de API, e um default que exige credencial faria `pat opportunity
+    research` falhar na primeira vez em que alguem o experimenta.
+    """
+    p.add_argument(
+        "--reasoner",
+        choices=("shape", "llm"),
+        default="shape",
+        help="shape: tabela deterministica, sem rede. llm: modelo, exige ANTHROPIC_API_KEY",
+    )
+    p.add_argument("--model", dest="reasoner_model", default=DEFAULT_REASONER_MODEL)
+    p.add_argument("--no-cache", dest="no_cache", action="store_true")
+
+
+def _reasoner(args):
+    """Escolhe o raciocinador. Raiz de composicao, e por isso mora aqui.
+
+    Sem fallback silencioso: pedir `--reasoner llm` sem chave falha dizendo
+    isso. Cair para o `ShapeReasoner` produziria uma investigacao que diz ter
+    sido raciocinada por um modelo e nao foi - e o `reasoner_id` do relatorio
+    carregaria a mentira para dentro do diario, onde ela fica.
+    """
+    from pat.opportunity.reason import ShapeReasoner
+
+    if getattr(args, "reasoner", "shape") == "shape":
+        return ShapeReasoner()
+
+    from pat.cli import _llm_client
+    from pat.opportunity.llm_reasoner import LlmReasoner
+    from pat.research.llm import LLMTransportError
+
+    try:
+        cliente = _llm_client(args)
+    except LLMTransportError as exc:
+        # A mensagem do adapter ja diz o certo; o traceback em volta dela nao
+        # acrescenta nada a quem digitou o comando errado.
+        print(f"{exc}\n\nOu rode sem chave: --reasoner shape", file=sys.stderr)
+        raise SystemExit(1) from None
+    return LlmReasoner(client=cliente, model=args.reasoner_model)
+
+
 def add_opportunity_parser(sub) -> None:
     """Pendura `pat opportunity ...` no parser principal.
 
@@ -591,12 +638,14 @@ def add_opportunity_parser(sub) -> None:
     p_chat = interno.add_parser("chat", help="fala com o agente")
     p_chat.add_argument("text", nargs="*", help="sem texto, abre o laco de leitura")
     p_chat.add_argument("--workspace")
+    _add_reasoner_args(p_chat)
     p_chat.set_defaults(func=cmd_opp_chat)
 
     p_res = interno.add_parser("research", help="decompoe um objetivo e executa")
     p_res.add_argument("--objective", required=True)
     p_res.add_argument("--workspace")
     p_res.add_argument("--max-tasks", type=int, default=12)
+    _add_reasoner_args(p_res)
     p_res.set_defaults(func=cmd_opp_research)
 
     p_cri = interno.add_parser("critic", help="advogado do diabo; sai 1 se ha achado duro")
