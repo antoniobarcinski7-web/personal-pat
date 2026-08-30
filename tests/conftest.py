@@ -15,6 +15,29 @@ from decimal import Decimal
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def _sem_keychain(monkeypatch):
+    """Nenhum teste consulta o Keychain da maquina. Autouse, para toda a suite.
+
+    Sem isto, `monkeypatch.delenv("ANTHROPIC_API_KEY")` deixou de significar
+    "sem credencial" no dia em que alguem guardou a chave no Keychain: a
+    resolucao caia para a proxima fonte e o adapter construia normalmente. Seis
+    testes que afirmavam "sem chave o sistema para" passaram a passar por
+    acidente numa maquina e a falhar noutra.
+
+    E o pior formato de teste que existe - verde por estado de maquina -, e a
+    unica defesa e cortar a fonte na raiz da suite em vez de lembrar de
+    monkeypatchar em cada arquivo.
+
+    Quem QUER exercitar a leitura do Keychain monkeypatcha `subprocess.run` em
+    `credentials`, como `tests/research/test_credentials.py` faz - ali o que se
+    testa e o parsing da saida do comando, nunca o conteudo da maquina.
+    """
+    monkeypatch.setattr(
+        "pat.credentials._from_keychain", lambda: None, raising=False
+    )
+
+
 ENCODING = "latin-1"
 
 INDEX_COLUMNS = [

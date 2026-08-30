@@ -12,14 +12,32 @@ import subprocess
 
 import pytest
 
+from pat import credentials as _credentials
 from pat.research.llm.anthropic import ENV_API_KEY
-from pat.research.llm.credentials import (
+
+from pat.credentials import (
     KEYCHAIN_SERVICE,
     CredentialSource,
     ResolvedCredential,
     keychain_store_command,
     resolve_api_key,
 )
+
+_LEITURA_REAL = _credentials._from_keychain
+"""Capturada no import, ANTES de a guarda autouse da suite entrar.
+
+`tests/conftest.py` corta `_from_keychain` para toda a suite, para que nenhum
+teste dependa do que esta guardado na maquina. Este arquivo e a excecao: ele
+testa a propria leitura. Devolver a funcao real aqui e o oposto de furar a
+guarda - o que se exercita abaixo e o parsing da saida do comando, com
+`subprocess.run` sempre dublado, nunca o conteudo do Keychain de ninguem.
+"""
+
+
+@pytest.fixture(autouse=True)
+def _restaura_a_leitura(monkeypatch):
+    monkeypatch.setattr(_credentials, "_from_keychain", _LEITURA_REAL)
+
 
 
 def test_explicito_vence_tudo():
@@ -36,7 +54,7 @@ def test_ambiente_vence_o_keychain(monkeypatch):
     ao lugar certo.
     """
     monkeypatch.setattr(
-        "pat.research.llm.credentials._from_keychain", lambda: "sk-guardada"
+        "pat.credentials._from_keychain", lambda: "sk-guardada"
     )
     credencial = resolve_api_key(env={ENV_API_KEY: "sk-do-momento"})
     assert credencial.key == "sk-do-momento"
@@ -45,7 +63,7 @@ def test_ambiente_vence_o_keychain(monkeypatch):
 
 def test_keychain_quando_o_ambiente_esta_vazio(monkeypatch):
     monkeypatch.setattr(
-        "pat.research.llm.credentials._from_keychain", lambda: "sk-guardada"
+        "pat.credentials._from_keychain", lambda: "sk-guardada"
     )
     credencial = resolve_api_key(env={})
     assert credencial == ResolvedCredential("sk-guardada", CredentialSource.KEYCHAIN)
@@ -54,7 +72,7 @@ def test_keychain_quando_o_ambiente_esta_vazio(monkeypatch):
 def test_sem_fonte_nenhuma_devolve_none(monkeypatch):
     """`None`, e nao string vazia: uma chave vazia chegaria ao SDK e viraria um
     401 sem causa visivel."""
-    monkeypatch.setattr("pat.research.llm.credentials._from_keychain", lambda: None)
+    monkeypatch.setattr("pat.credentials._from_keychain", lambda: None)
     assert resolve_api_key(env={}) is None
 
 
@@ -62,7 +80,7 @@ def test_variavel_vazia_nao_conta_como_chave(monkeypatch):
     """`export ANTHROPIC_API_KEY=` e o jeito comum de "desligar" a variavel, e
     trata-la como definida faria o Keychain nunca ser consultado."""
     monkeypatch.setattr(
-        "pat.research.llm.credentials._from_keychain", lambda: "sk-guardada"
+        "pat.credentials._from_keychain", lambda: "sk-guardada"
     )
     credencial = resolve_api_key(env={ENV_API_KEY: ""})
     assert credencial.source is CredentialSource.KEYCHAIN
@@ -97,7 +115,7 @@ def test_o_comando_guardado_pede_a_chave_em_vez_de_receber_na_linha():
 def test_keychain_ausente_nao_e_falha(monkeypatch):
     """Item que nao existe faz `security` sair com codigo 44. Isso e "nao ha
     chave guardada", e nao "a configuracao esta quebrada"."""
-    from pat.research.llm import credentials
+    from pat import credentials
 
     monkeypatch.setattr(credentials.sys, "platform", "darwin")
     monkeypatch.setattr(
@@ -111,7 +129,7 @@ def test_keychain_ausente_nao_e_falha(monkeypatch):
 def test_fora_do_macos_nem_tenta(monkeypatch):
     """`security` nao existe em Linux, e deixar o `FileNotFoundError` subir
     faria a ausencia de uma conveniencia parecer falha de configuracao."""
-    from pat.research.llm import credentials
+    from pat import credentials
 
     monkeypatch.setattr(credentials.sys, "platform", "linux")
 
@@ -125,7 +143,7 @@ def test_fora_do_macos_nem_tenta(monkeypatch):
 def test_keychain_travado_vira_ausencia_e_nao_espera_para_sempre(monkeypatch):
     """O `security` pode abrir dialogo de desbloqueio. Um teto curto transforma
     "travou" num estado que o chamador ja sabe tratar."""
-    from pat.research.llm import credentials
+    from pat import credentials
 
     monkeypatch.setattr(credentials.sys, "platform", "darwin")
 
@@ -140,7 +158,7 @@ def test_a_chave_lida_perde_so_a_quebra_de_linha_do_comando(monkeypatch):
     """`-w` imprime a senha com `\\n` no fim. O `strip` e sobre a saida do
     comando; uma chave que de fato tenha espaco foi guardada errada, e o 401
     depois disso e informacao verdadeira."""
-    from pat.research.llm import credentials
+    from pat import credentials
 
     monkeypatch.setattr(credentials.sys, "platform", "darwin")
     monkeypatch.setattr(
@@ -152,7 +170,7 @@ def test_a_chave_lida_perde_so_a_quebra_de_linha_do_comando(monkeypatch):
 
 
 def test_keychain_vazio_nao_vira_chave_vazia(monkeypatch):
-    from pat.research.llm import credentials
+    from pat import credentials
 
     monkeypatch.setattr(credentials.sys, "platform", "darwin")
     monkeypatch.setattr(
@@ -173,7 +191,7 @@ def test_o_adapter_sem_chave_ensina_a_guardar(monkeypatch):
     from pat.research.llm.anthropic import AnthropicClient
 
     monkeypatch.setattr(
-        "pat.research.llm.credentials.resolve_api_key", lambda **k: None
+        "pat.credentials.resolve_api_key", lambda **k: None
     )
     with pytest.raises(LLMTransportError) as exc:
         AnthropicClient()

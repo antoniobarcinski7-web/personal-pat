@@ -33,7 +33,6 @@ sub-relatar o que aconteceu.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 
 import anthropic
@@ -55,7 +54,11 @@ mudou o que este adapter envia - inclusive *deixar* de nao configurar algo -,
 incrementa. Sem isso, o comportamento mudaria sem que a identidade da chamada
 mudasse, e o cache serviria respostas de uma configuracao para outra."""
 
-ENV_API_KEY = "ANTHROPIC_API_KEY"
+from pat.credentials import ENV_API_KEY  # noqa: E402 - reexportado
+
+# `ENV_API_KEY` vive em `pat/credentials.py` desde que a resolucao ganhou uma
+# segunda fonte. Continua exportado daqui porque e onde quem procura "a
+# variavel da Anthropic" vai olhar.
 
 GENERATION_PROFILE = {
     "thinking": "provider_default",
@@ -104,7 +107,7 @@ class AnthropicClient:
         # Fontes NOMEADAS, em ordem fixa - ver `credentials.py`. Continua nao
         # inventando credencial: ler de uma lista fechada que alguem escreveu
         # nao e procurar a chave por ai.
-        from pat.research.llm.credentials import keychain_store_command, resolve_api_key
+        from pat.credentials import keychain_store_command, resolve_api_key
 
         credencial = resolve_api_key(explicit=api_key)
         if credencial is None:

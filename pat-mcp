@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Servidor MCP do PAT, para o Claude Desktop chamar.
+#
+# Wrapper pelo mesmo motivo do `./pat`: o console script instalado pelo `uv`
+# nao funciona no Python 3.14 desta maquina, e o Claude Desktop precisa de um
+# comando absoluto que funcione sem shell interativo - ele nao le o `.zshrc`,
+# entao alias nao serve aqui.
+#
+# `exec` importa: o Claude Desktop conversa com o processo por stdin/stdout, e
+# um bash intermediario no meio quebraria o transporte.
+set -euo pipefail
+RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$RAIZ"
+PYTHONPATH=src exec uv run --locked python -m pat.mcp_server

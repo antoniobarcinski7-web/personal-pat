@@ -208,9 +208,24 @@ def test_a_m41_nao_trouxe_dependencia_nova():
         dep.split(">")[0].split("=")[0].split("[")[0].strip()
         for dep in pyproject["project"]["dependencies"]
     }
-    assert nomes == {"pydantic", "httpx", "duckdb", "pytz", "anthropic", "pypdf"}, (
-        f"dependencias mudaram: {sorted(nomes)}"
-    )
+    assert nomes == {
+        "pydantic",
+        "httpx",
+        "duckdb",
+        "pytz",
+        "anthropic",
+        "pypdf",
+        "mcp",
+    }, f"dependencias mudaram: {sorted(nomes)}"
+    # `mcp` entrou quando o servidor MCP virou a interface principal: e a
+    # implementacao de referencia do protocolo, e reescrever o transporte a mao
+    # seria manter um protocolo de terceiro em vez de usa-lo.
+    #
+    # E a dependencia mais CARA do projeto, e o registro tem que dizer isso: ela
+    # traz starlette, uvicorn e um punhado de transitivas que nada mais aqui
+    # usa. Nenhuma delas e importada fora de `mcp_server.py` - o proprio guard
+    # abaixo, sobre `chat/`, continua valendo -, mas o custo existe e foi aceito
+    # em troca de o PAT deixar de ser um programa que alguem dirige.
     # `pypdf` entrou na Fase 5 (M5.1) por decisao registrada, e nao por
     # descuido: extrair texto de PDF nao tem como ser feito pela stdlib, e
     # todo documento qualitativo que a CVM publica e PDF. Foi escolhida a

@@ -18,6 +18,7 @@ dependencies = [
     # `extraction_version`, entao trocar de biblioteca ou de versao cria
     # unidades novas ao lado das antigas em vez de mudar as existentes.
     "pypdf>=6.1.1",
+    "mcp>=1.2",
 ]
 
 [project.optional-dependencies]

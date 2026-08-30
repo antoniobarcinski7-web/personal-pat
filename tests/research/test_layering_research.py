@@ -197,16 +197,28 @@ def test_a_rede_entra_por_um_arquivo_so():
     )
 
 
-def test_so_o_adapter_le_o_ambiente():
-    """Chave de API entra por um lugar. `config.py` continua sendo o unico
-    lugar do resto do projeto que le `os.environ`."""
+def test_a_camada_de_pesquisa_nao_le_o_ambiente():
+    """Nenhum arquivo aqui, e nao mais "so o adapter".
+
+    A regra ficou mais forte quando a resolucao de credencial virou
+    `pat/credentials.py`: ela tem tres fontes nomeadas - explicita, ambiente,
+    Keychain -, e uma delas chama `security` por `subprocess`. Nada disso pode
+    morar em `research/`, que e a camada onde `test_nao_existe_execucao_de_
+    codigo_arbitrario` afirma que nao ha subprocesso nenhum.
+
+    O adapter continua sendo o unico ponto por onde a credencial ENTRA. Ele so
+    nao a le mais: ele a pede.
+    """
     lendo = {
         path.relative_to(RESEARCH).as_posix()
         for path in RESEARCH.rglob("*.py")
         if "os.environ" in path.read_text(encoding="utf-8")
         or "getenv" in path.read_text(encoding="utf-8")
     }
-    assert lendo == {"llm/anthropic.py"}
+    assert lendo == set(), (
+        f"{sorted(lendo)} le o ambiente. A resolucao de credencial mora em "
+        "`pat/credentials.py`, fora desta camada."
+    )
 
 
 def test_o_adapter_desliga_a_retentativa_do_sdk():

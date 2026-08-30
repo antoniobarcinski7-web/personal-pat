@@ -43,6 +43,12 @@ __all__ = [
     "resolve_api_key",
 ]
 
+ENV_API_KEY = "ANTHROPIC_API_KEY"
+"""Declarado aqui, e reexportado pelo adapter.
+
+Importa-lo do adapter faria um ciclo - ele importa este modulo - e amarraria a
+resolucao de credencial ao unico provider que existe hoje."""
+
 KEYCHAIN_SERVICE = "pat-anthropic-api-key"
 
 _KEYCHAIN_TIMEOUT_S = 5
@@ -117,8 +123,6 @@ def resolve_api_key(
     ambiente do processo - um teste que exportasse variavel de verdade
     contaminaria os que rodam depois dele.
     """
-    from pat.research.llm.anthropic import ENV_API_KEY
-
     if explicit:
         return ResolvedCredential(explicit, CredentialSource.EXPLICIT)
 
