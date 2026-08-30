@@ -101,14 +101,23 @@ class AnthropicClient:
             self._sdk = sdk
             return
 
-        key = api_key or os.environ.get(ENV_API_KEY)
-        if not key:
+        # Fontes NOMEADAS, em ordem fixa - ver `credentials.py`. Continua nao
+        # inventando credencial: ler de uma lista fechada que alguem escreveu
+        # nao e procurar a chave por ai.
+        from pat.research.llm.credentials import keychain_store_command, resolve_api_key
+
+        credencial = resolve_api_key(explicit=api_key)
+        if credencial is None:
             raise LLMTransportError(
-                f"{ENV_API_KEY} nao esta definida. O adapter nao inventa credencial "
-                "e nao cai para um modo degradado."
+                f"{ENV_API_KEY} nao esta definida e o Keychain nao tem a chave. "
+                "O adapter nao inventa credencial e nao cai para um modo "
+                "degradado.\n\n"
+                "Para guardar de uma vez, no Keychain do macOS:\n"
+                f"  {keychain_store_command()}"
             )
+        self._credential_source = credencial.source
         self._sdk = anthropic.Anthropic(
-            api_key=key,
+            api_key=credencial.key,
             # Obrigatorio, nao preferencia: o default do SDK e 2, e retentativa
             # e um segundo caminho de influencia nao hasheado.
             max_retries=0,

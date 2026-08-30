@@ -307,11 +307,32 @@ o modelo escolheu, e só então alguma coisa executa. Encadear os dois faria a
 primeira execução de um plano acontecer antes de qualquer chance de revisá-lo.
 
 ```bash
-export ANTHROPIC_API_KEY=...
-
 pat plan "Qual foi a margem EBITDA do GPA em 2024?" --as-of 2025-06-30 --out p.json
 pat ask --plan-file p.json --writer
 ```
+
+#### A credencial
+
+Três fontes nomeadas, nessa ordem: `api_key=` explícito, `ANTHROPIC_API_KEY` no
+ambiente, e o Keychain do macOS. Não há quarta — sem `.env`, sem
+`~/.pat/credentials`: arquivo de credencial dentro do projeto é a maneira mais
+comum de um segredo virar commit.
+
+Para guardar de uma vez, em vez de exportar a cada terminal novo:
+
+```bash
+security add-generic-password -a "$USER" -s pat-anthropic-api-key -U -w
+```
+
+O `-w` no fim faz o `security` **perguntar** a chave, em vez de recebê-la na
+linha — na linha ela ficaria no histórico do shell. Fica cifrada no
+`login.keychain`, e não em texto puro num `.zshrc` que vai junto num backup ou
+num `git add -A` distraído.
+
+O ambiente vence o Keychain de propósito: `ANTHROPIC_API_KEY=sk-outra pat ...`
+continua sendo o jeito de rodar uma chave diferente por sessão. O contrário
+faria uma chave guardada meses atrás sobrescrever, calada, a que alguém acabou
+de exportar — e o sintoma seria cobrança na conta errada.
 
 O LLM entra em exatamente dois pontos, e em nenhum deles produz um número:
 
@@ -354,7 +375,6 @@ auditoria de por que não houve resposta vale tanto quanto a de por que houve.
 ### Conversa (L4) — a interface local
 
 ```bash
-export ANTHROPIC_API_KEY=...
 pat serve                      # http://127.0.0.1:8765
 ```
 
