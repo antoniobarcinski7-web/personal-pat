@@ -22,11 +22,20 @@ Semantica (Fase 2)
     pat accounts --statement DVA ...    plano de contas efetivo (para mapear)
     pat mapping-check --cod-cvm ...     os bindings ainda resolvem?
 
-Pesquisa (Fase 3, Milestone 1 - deterministico, sem LLM)
+Pesquisa (Fase 3)
 
     pat capability                      o que o sistema sabe executar
     pat ask --plan-file p.json          executa um plano ja escrito
     pat ask --plan-file p.json --dry-run   valida e para antes de executar
+
+O caminho com modelo sao DUAS invocacoes, de proposito: o plano sai em disco,
+um humano le o que o modelo escolheu, e so entao alguma coisa executa.
+
+    pat plan "<pergunta>" --out p.json  pergunta -> plano (usa a API)
+    pat ask --plan-file p.json --writer executa e redige (usa a API)
+
+Os dois exigem ANTHROPIC_API_KEY, e falham dizendo isso em vez de cair para um
+modo degradado. Sem `--writer`, `pat ask` nao chama modelo nenhum.
 
 Toda consulta da Fase 2 exige `--as-of`, como as da Fase 1: nao existe atalho
 que devolva "o valor" sem dizer segundo quando.
@@ -641,7 +650,7 @@ def cmd_mapping_check(args) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Fase 3 - camada de pesquisa (Milestone 1: sem LLM)
+# Fase 3 - camada de pesquisa (caminho deterministico; o modelo entra abaixo)
 # ---------------------------------------------------------------------------
 
 
@@ -756,16 +765,25 @@ def _record_manifest(args, manifest) -> bool | None:
 
 
 def cmd_ask(args) -> int:
-    """Executa um plano ja escrito. Milestone 1 nao chama modelo nenhum."""
+    """Executa um plano ja escrito. Sem `--writer`, nao chama modelo nenhum.
+
+    O escritor e opt-in e continuara sendo. Nao e cautela: `pat ask` e o
+    comando que prova que a camada deterministica roda inteira sem
+    credencial, sem rede e sem custo, e liga-lo por default apagaria essa
+    prova - o caminho barato viraria um caminho que ninguem mais exercita.
+    """
     from pathlib import Path
 
     from pat.audit.run import current_git_sha
     from pat.research import load_envelope, review_plan, run_plan
+    from pat.research.llm import LLMError
+    from pat.research.llm.cache import call_sha256_of
+    from pat.research.writer import WriterError
 
     if not args.plan_file:
         print(
-            "Milestone 1 nao tem planejador: passe --plan-file com um envelope "
-            "{question, plan}.\nO planejador por LLM entra no Milestone 2.",
+            "passe --plan-file com um envelope {question, plan}. "
+            "Use `pat plan` para produzir um a partir de uma pergunta.",
             file=sys.stderr,
         )
         return 2
@@ -789,11 +807,51 @@ def cmd_ask(args) -> int:
             print("nao executado (--dry-run)")
             return 0
 
-        outcome = run_plan(conn, plan=plan, question=question, git_sha=current_git_sha())
+        escritor = None
+        if not args.no_writer:
+            try:
+                escritor = _llm_client(args)
+            except LLMError as exc:
+                print(f"cliente de modelo indisponivel: {exc}", file=sys.stderr)
+                return 2
+
+        try:
+            outcome = run_plan(
+                conn,
+                plan=plan,
+                question=question,
+                git_sha=current_git_sha(),
+                llm=escritor,
+                model=args.model if escritor else None,
+            )
+        except WriterError as exc:
+            # Erro nomeado, nao stack trace, e nao ha caminho de fallback para
+            # a prosa deterministica: cair para ela em silencio apresentaria um
+            # texto que ninguem pediu como se fosse o pedido. Quem quer o
+            # deterministico roda sem --writer.
+            print(f"o modelo nao produziu uma resposta: {exc}", file=sys.stderr)
+            print(f"  resposta  {exc.response_sha256[:12]}", file=sys.stderr)
+            if exc.detail:
+                print(f"  trecho    {exc.detail[:200]}", file=sys.stderr)
+            return 1
+        except LLMError as exc:
+            print(f"chamada ao modelo falhou: {exc}", file=sys.stderr)
+            return 2
+
         # Libera o lock do warehouse antes de gravar: o DuckDB nao aceita uma
         # conexao de escrita enquanto a de leitura do mesmo arquivo esta aberta.
         conn.close()
         gravado = _record_manifest(args, outcome.manifest)
+        if outcome.writer is not None:
+            _record_call(
+                args,
+                outcome.writer.provenance,
+                call_sha256=call_sha256_of(
+                    outcome.writer.provenance.prompt_sha256, escritor.fingerprint
+                ),
+                kind="writer",
+                manifest_id=outcome.manifest.manifest_id,
+            )
 
         _print_research(outcome, plan=plan, question=question)
         print()
@@ -840,6 +898,20 @@ def cmd_ask(args) -> int:
                 print(f"  {claim.token:<28} {claim.rendered_value:<16} {claim.result_id[:12]}")
                 print(f"    {claim.means}")
 
+        # Impressas separadas, e nunca no mesmo bloco dos numeros: a distincao
+        # entre "isto foi medido" e "isto e uma leitura" so vale se ela
+        # sobreviver ate a tela. Cada leitura sai com os result_id em que se
+        # apoia, para que a base seja conferivel sem sair do terminal.
+        leituras = [c for c in outcome.answer.claims if c.claim_kind == "interpretive"]
+        if leituras:
+            print("\nLEITURAS  (afirmacao do modelo, nao medicao)")
+            for claim in leituras:
+                print(f"  {claim.text}")
+                print(f"    apoia-se em {', '.join(s[:12] for s in claim.supports)}")
+
+        if outcome.writer is not None:
+            _print_provenance(outcome.writer.provenance)
+
         manifesto = outcome.manifest
         print("\nMANIFESTO")
         print(f"  manifest_id  {manifesto.manifest_id}")
@@ -852,6 +924,243 @@ def cmd_ask(args) -> int:
         return 0
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Fase 3 - Milestone 2.3: o caminho real ate o modelo
+# ---------------------------------------------------------------------------
+
+DEFAULT_PLANNER_MODEL = "claude-opus-5"
+"""Escolher o modelo e decisao de produto, e por isso ela mora aqui e nao na
+biblioteca: `build_request` recusa default proprio de proposito. Aqui e a
+borda do programa, onde uma escolha padrao e configuracao e nao regra."""
+
+
+def _llm_client(args):
+    """O cliente concreto, montado na borda. Serve o planejador e o escritor.
+
+    Um ponto de montagem para os dois, e nao um por uso: quem escolhe provider,
+    cache e credencial e a mesma decisao nos dois casos, e duplicar a montagem
+    faria `pat plan` e `pat ask --writer` poderem divergir em silencio - por
+    exemplo, um com cache e outro sem.
+
+    Esta funcao existe separada por duas razoes. A primeira e arquitetural: a
+    camada de pesquisa fala com o modelo por Protocol e nao pode construir um
+    adapter sem ganhar saida de rede no import - montar aqui e o que mantem o
+    guard de camada dizendo o que ele diz. A segunda e de teste: com um ponto
+    de montagem so, o caminho inteiro do CLI roda contra um cliente falso sem
+    que nada do resto precise de um seam proprio.
+
+    O cache envolve o adapter, nunca o contrario. `CachedLLMClient` delega o
+    `fingerprint` para quem de fato responde, entao envolver nao muda a
+    identidade da chamada - se mudasse, a chave passaria a depender de estar em
+    cache, que e circular.
+    """
+    from pat.research.llm.anthropic import AnthropicClient
+    from pat.research.llm.cache import CachedLLMClient
+    from pat.research.llm.store import FileLLMCache
+
+    client = AnthropicClient()
+    if args.no_cache:
+        return client
+    return CachedLLMClient(client, FileLLMCache(resolve_paths(args.home).ensure().llm))
+
+
+def _question_from_args(args):
+    """Os `pinned_*` do CLI viram os `pinned_*` do contrato, ordenados.
+
+    A ordenacao nao e estetica: `question_id` e hash da pergunta canonica, e o
+    contrato exige tupla ordenada justamente para que `--entity A --entity B` e
+    `--entity B --entity A` sejam a mesma pergunta. Sem isso, a ordem em que
+    alguem digitou os argumentos viraria uma pergunta diferente, e o cache
+    nunca acertaria duas vezes seguidas.
+    """
+    from pat.contracts.research import OutputKind, ResearchQuestion
+    from pat.contracts.semantics import ReportingScope
+
+    return ResearchQuestion(
+        text=args.text,
+        as_of=date.fromisoformat(args.as_of) if args.as_of else date.today(),
+        asked_at=datetime.now(UTC),
+        requested_output=OutputKind(args.output),
+        pinned_entities=tuple(sorted(set(args.entity or ()))),
+        pinned_periods=tuple(sorted({date.fromisoformat(p) for p in (args.period or ())})),
+        pinned_scope=ReportingScope(args.scope) if args.scope else None,
+    )
+
+
+def _print_provenance(provenance) -> None:
+    print("\nPROCEDENCIA")
+    print(f"  modelo       {provenance.model_id}")
+    print(f"  cliente      {provenance.client_fingerprint}")
+    print(f"  chamado em   {provenance.called_at}  {'(cache)' if provenance.cached else ''}")
+    temperatura = provenance.temperature
+    print(f"  temperatura  {'nao pedida' if temperatura is None else temperatura}")
+    print(f"  max_tokens   {provenance.max_tokens}")
+    print(f"  prompt       {provenance.prompt_sha256[:12]}")
+    print(f"  resposta     {provenance.response_sha256[:12]}")
+    print(f"  capability   {provenance.capability_sha256[:12]}")
+
+
+def _record_call(
+    args, provenance, *, call_sha256: str, kind: str = "planner", manifest_id: str | None = None
+) -> None:
+    """Grava a chamada em `llm_call`.
+
+    `manifest_id` nulo e o caso normal do planejador, e nao uma lacuna: `pat
+    plan` planeja e para, e manifesto so existe quando algo executa. E
+    precisamente a situacao que fez a coluna ser nulavel (M-3) - a chamada
+    custou dinheiro e tem que ter rastro mesmo quando o plano e recusado.
+    `pat runs` nao a mostra; ela sai em `orphan_calls`.
+
+    A do escritor e o caso oposto e por isso passa o manifesto: ela so existe
+    porque uma execucao existiu, e a ligacao entre o texto e a corrida que o
+    produziu e exatamente o que se quer poder consultar depois.
+    """
+    from pat.store.llm_calls import write_call
+
+    conn = connect(resolve_paths(args.home).warehouse)
+    try:
+        migrate(conn)  # llm_call e aditiva: warehouse antigo migra sozinho
+        write_call(
+            conn, provenance, call_sha256=call_sha256, kind=kind, manifest_id=manifest_id
+        )
+    finally:
+        conn.close()
+
+
+def cmd_plan(args) -> int:
+    """Pergunta -> modelo -> plano validado. Nao executa.
+
+    A separacao entre planejar e executar continua sendo duas invocacoes de
+    proposito: o plano sai em disco com `--out`, um humano le, e so entao `pat
+    ask` roda. Encadear os dois num comando so faria a primeira execucao de um
+    plano acontecer antes de qualquer chance de ler o que o modelo escolheu.
+    """
+    from pathlib import Path
+
+    from pat.contracts.research import PlanEnvelope
+    from pat.research import plan_for_question, review_plan
+    from pat.research.llm import LLMError
+    from pat.research.llm.cache import call_sha256_of
+    from pat.research.planner import PlannerError
+
+    question = _question_from_args(args)
+
+    try:
+        llm = _llm_client(args)
+    except LLMError as exc:
+        print(f"cliente de modelo indisponivel: {exc}", file=sys.stderr)
+        return 2
+
+    if (conn := _open_readonly(args)) is None:
+        return 1
+
+    try:
+        try:
+            planned = plan_for_question(
+                conn, question=question, llm=llm, model=args.model, max_tokens=args.max_tokens
+            )
+        except PlannerError as exc:
+            # Erro nomeado, nao stack trace: o `response_sha256` recupera o
+            # texto cru no cache, entao o diagnostico nao depende de a
+            # mensagem ter copiado o suficiente da resposta.
+            print(f"o modelo nao produziu um plano: {exc}", file=sys.stderr)
+            print(f"  resposta  {exc.response_sha256[:12]}", file=sys.stderr)
+            if exc.detail:
+                print(f"  trecho    {exc.detail[:200]}", file=sys.stderr)
+            return 1
+        except LLMError as exc:
+            print(f"chamada ao modelo falhou: {exc}", file=sys.stderr)
+            return 2
+
+        plan = planned.plan
+        outcome = review_plan(conn, plan=plan, question=question)
+    finally:
+        conn.close()
+
+    # Depois de fechar a leitura: o DuckDB nao aceita conexao de escrita
+    # enquanto a de leitura do mesmo arquivo esta aberta. A gravacao acontece
+    # mesmo quando a validacao recusa - uma chamada recusada e exatamente a
+    # que precisa de rastro.
+    chave = call_sha256_of(planned.provenance.prompt_sha256, llm.fingerprint)
+    _record_call(args, planned.provenance, call_sha256=chave)
+
+    _print_research(outcome, plan=plan, question=question)
+    _print_provenance(planned.provenance)
+
+    if args.out:
+        envelope = PlanEnvelope(question=question, plan=plan)
+        # `model_dump_json`, e nao `canonical_bytes`: a forma canonica existe
+        # para hashear e nao para reler - ela achata `MetricRef` em
+        # "nome@versao", que e ambiguo na volta. O arquivo aqui e entrada de
+        # `pat ask`, entao precisa da forma que o contrato aceita de volta.
+        Path(args.out).write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+        print(f"\n  plano gravado em {args.out}")
+        print(f"  execute com: pat ask --plan-file {args.out}")
+
+    print()
+    if not outcome.executable:
+        print("VALIDACAO  RECUSADO", file=sys.stderr)
+        _print_problems(outcome)
+        return 1
+
+    print("VALIDACAO  ok - 0 violacoes, 0 pendencias")
+    print("nao executado: `pat plan` planeja e para.")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    """Sobe o chat local. Uma casca sobre `pat plan` + `pat ask --writer`.
+
+    Recusa na PARTIDA, e nao no primeiro turno: sem warehouse ou sem
+    credencial, o servico nao tem o que fazer, e descobrir isso depois de
+    digitar a primeira pergunta desperdicaria a unica coisa que o usuario ainda
+    nao tinha - a pergunta escrita.
+
+    O cliente vem de `_llm_client`, o mesmo ponto de montagem de `pat plan` e
+    `pat ask --writer`. Montar outro aqui faria o chat poder divergir deles em
+    silencio - por exemplo, um com cache e outro sem.
+    """
+    from pat.audit.run import current_git_sha
+    from pat.chat import ChatService
+    from pat.chat.http import HOST, serve
+    from pat.research.llm import LLMError
+
+    paths = resolve_paths(args.home)
+    if not paths.warehouse.exists():
+        print(
+            f"warehouse nao encontrado em {paths.warehouse}.\n"
+            "Rode `pat init` e depois `pat fetch`/`pat build`.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        llm = _llm_client(args)
+    except LLMError as exc:
+        print(f"cliente de modelo indisponivel: {exc}", file=sys.stderr)
+        return 2
+
+    paths.ensure()
+    service = ChatService(
+        paths=paths,
+        llm=llm,
+        model=args.model,
+        git_sha=current_git_sha(),
+        default_as_of=date.fromisoformat(args.as_of) if args.as_of else None,
+    )
+    service.snapshot()  # falha aqui, antes de aceitar conexao, se o warehouse nao servir
+
+    print(f"pat chat em http://{HOST}:{args.port}")
+    print(f"  modelo     {args.model}")
+    print(f"  warehouse  {paths.warehouse}")
+    print("  ctrl-c para parar")
+    try:
+        serve(service, port=args.port)
+    except KeyboardInterrupt:
+        print("\nencerrado.")
+    return 0
 
 
 def cmd_runs(args) -> int:
@@ -1037,17 +1346,75 @@ def build_parser() -> argparse.ArgumentParser:
         "--plan-file",
         dest="plan_file",
         required=True,
-        help="JSON com {question, plan}. O planejador por LLM e do Milestone 2.",
+        help="JSON com {question, plan}; produza um com `pat plan --out`",
     )
     p_ask.add_argument("--dry-run", dest="dry_run", action="store_true", help="valida e para")
+    # O escritor e opt-in, e o default nao vai mudar: `pat ask` e o comando que
+    # prova que a camada deterministica roda inteira sem credencial, sem rede e
+    # sem custo. `--no-writer` continua aceito porque ja era o default - existe
+    # para poder ser escrito por extenso num script, nao para desligar algo.
     p_ask.add_argument(
-        "--no-writer",
+        "--writer",
         dest="no_writer",
-        action="store_true",
+        action="store_false",
         default=True,
-        help="prosa deterministica (unico modo no Milestone 1)",
+        help="redige a resposta com o modelo (usa a API); sem isso, prosa deterministica",
+    )
+    p_ask.add_argument(
+        "--no-writer", dest="no_writer", action="store_true", help="prosa deterministica (default)"
+    )
+    p_ask.add_argument("--model", default=DEFAULT_PLANNER_MODEL, help="so com --writer")
+    p_ask.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        help="ignora o cache de chamadas e paga a chamada de novo",
     )
     p_ask.set_defaults(func=cmd_ask)
+
+    p_plan = sub.add_parser("plan", help="pergunta -> plano, pelo modelo (usa a API)")
+    p_plan.add_argument("text", help="a pergunta, em linguagem natural")
+    p_plan.add_argument("--as-of", dest="as_of", help="data de conhecimento (default: hoje)")
+    p_plan.add_argument(
+        "--output",
+        default="number",
+        choices=["number", "series", "comparison", "narrative"],
+        help="formato pedido",
+    )
+    p_plan.add_argument(
+        "--entity", action="append", help="fixa uma entidade (repetivel); o modelo nao contradiz"
+    )
+    p_plan.add_argument("--period", action="append", help="fixa um period_end (repetivel)")
+    p_plan.add_argument("--scope", choices=["consolidated", "parent_only"], help="fixa o escopo")
+    p_plan.add_argument("--model", default=DEFAULT_PLANNER_MODEL)
+    p_plan.add_argument("--max-tokens", dest="max_tokens", type=int, default=None)
+    p_plan.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        help="ignora o cache de chamadas e paga a chamada de novo",
+    )
+    p_plan.add_argument("--out", help="grava o envelope {question, plan} para `pat ask`")
+    p_plan.set_defaults(func=cmd_plan)
+
+    # -- Fase 4: a casca conversacional --------------------------------------
+
+    p_serve = sub.add_parser("serve", help="sobe o chat local (usa a API)")
+    p_serve.add_argument("--port", type=int, default=8765)
+    p_serve.add_argument("--model", default=DEFAULT_PLANNER_MODEL)
+    p_serve.add_argument(
+        "--as-of",
+        dest="as_of",
+        help="data de conhecimento das sessoes novas (default: hoje)",
+    )
+    p_serve.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        help="ignora o cache de chamadas e paga a chamada de novo",
+    )
+    # Sem `--host`: ver o cabecalho de `chat/http.py`.
+    p_serve.set_defaults(func=cmd_serve)
 
     p_runs = sub.add_parser("runs", help="execucoes recentes")
     p_runs.add_argument("--limit", type=int, default=20)

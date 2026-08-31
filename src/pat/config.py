@@ -42,8 +42,20 @@ class Paths:
         """
         return self.home / "llm"
 
+    @property
+    def chat(self) -> Path:
+        """Log das sessoes de conversa. Conveniencia de UI, nao auditoria.
+
+        A auditoria de um turno ja esta em `research_run` e `llm_call`, ligados
+        pelo `manifest_id`. O que mora aqui e so qual turno veio antes de qual -
+        e por isso apagar `data/chat/` nao perde nada auditavel, enquanto apagar
+        `research_run` perde. Guardar as duas coisas no mesmo lugar apagaria a
+        distincao.
+        """
+        return self.home / "chat"
+
     def ensure(self) -> "Paths":
-        for path in (self.home, self.bronze, self.runs, self.llm):
+        for path in (self.home, self.bronze, self.runs, self.llm, self.chat):
             path.mkdir(parents=True, exist_ok=True)
         return self
 

@@ -181,3 +181,124 @@ def test_o_warehouse_continua_legivel_depois_de_gravar(home, capsys):
 
     assert main(["--home", home, "capability"]) == 0
     assert "CIA BRASILEIRA DE DISTRIBUICAO" in capsys.readouterr().out
+
+
+# -- `pat ask --writer`: o M3 na linha de comando ----------------------------
+
+
+@pytest.fixture
+def escritor(monkeypatch):
+    """Substitui o ponto de montagem do cliente, nao o adapter.
+
+    Mesmo seam de `pat plan`: o CLI monta um `LLMClient` e a camada de pesquisa
+    nao sabe qual. Trocar o ponto de montagem mantem o teste falando sobre a
+    fronteira que existe de verdade.
+    """
+    import json
+
+    from tests.research.test_writer import ScriptedLLM
+
+    duplo = ScriptedLLM(
+        json.dumps(
+            {
+                "prose": (
+                    "A margem EBITDA consolidada foi de {{s:margin_fy2024}} em "
+                    "{{p:fy2024}}, contra {{s:margin_fy2023}} em {{p:fy2023}}."
+                ),
+                "interpretations": [
+                    {
+                        "text": "A rentabilidade operacional ficou praticamente estavel.",
+                        "supports": ["margin_fy2023", "margin_fy2024"],
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr("pat.cli._llm_client", lambda args: duplo)
+    return duplo
+
+
+def test_sem_writer_nenhum_modelo_e_montado(home, monkeypatch, capsys):
+    """O default de `pat ask` nao toca no modelo. Conferido montando uma bomba
+    no ponto de montagem: se o comando a alcancasse, o teste quebraria."""
+
+    def explode(args):
+        raise AssertionError("`pat ask` sem --writer nao pode montar cliente de modelo")
+
+    monkeypatch.setattr("pat.cli._llm_client", explode)
+
+    assert main(["--home", home, "ask", "--plan-file", str(PLANO)]) == 0
+
+
+def test_writer_redige_a_resposta_e_mostra_a_procedencia(home, escritor, capsys):
+    codigo = main(["--home", home, "ask", "--plan-file", str(PLANO), "--writer"])
+    saida = capsys.readouterr().out
+
+    assert codigo == 0
+    assert "PROCEDENCIA" in saida
+    assert len(escritor.calls) == 1
+
+    # So o bloco da prosa. Em CITACOES o token aparece de proposito - ele e a
+    # chave que liga o texto ao `result_id`, e e o que torna a resposta
+    # conferivel linha a linha.
+    prosa = saida.split("RESPOSTA")[1].split("CITACOES")[0]
+
+    assert "A margem EBITDA consolidada foi de" in prosa
+    assert "{{" not in prosa, "token nao substituido chegou a prosa"
+    assert "10.09%" in prosa and "3.89%" in prosa, (
+        "o valor do executor tem que chegar ao texto, e sao estes: os mesmos "
+        "que o caminho deterministico imprime"
+    )
+
+
+def test_a_leitura_do_modelo_sai_separada_dos_numeros(home, escritor, capsys):
+    """A distincao entre medicao e afirmacao tem que sobreviver ate a tela."""
+    main(["--home", home, "ask", "--plan-file", str(PLANO), "--writer"])
+    saida = capsys.readouterr().out
+
+    assert "LEITURAS" in saida
+    assert "nao medicao" in saida
+    assert saida.index("CITACOES") < saida.index("LEITURAS")
+
+
+def test_a_chamada_do_escritor_e_gravada_ligada_ao_manifesto(home, escritor, capsys):
+    """Ao contrario da do planejador, esta nasce com manifesto: ela so existe
+    porque uma execucao existiu."""
+    from pat.config import resolve_paths
+    from pat.store.db import connect
+    from pat.store.llm_calls import orphan_calls, read_calls
+
+    main(["--home", home, "ask", "--plan-file", str(PLANO), "--writer"])
+    saida = capsys.readouterr().out
+
+    manifest_id = next(
+        linha.split()[-1] for linha in saida.splitlines() if "manifest_id" in linha
+    )
+
+    conn = connect(resolve_paths(home).warehouse)
+    try:
+        (chamada,) = read_calls(conn, manifest_id)
+        orfas = orphan_calls(conn)
+    finally:
+        conn.close()
+
+    assert chamada.kind == "writer"
+    assert orfas == [], "a chamada do escritor nao pode ficar sem corrida"
+
+
+def test_prosa_recusada_nao_cai_para_a_deterministica(home, monkeypatch, capsys):
+    """Sem fallback, de proposito: apresentar a prosa deterministica quando a
+    do modelo foi recusada mostraria um texto que ninguem pediu como se fosse
+    o pedido."""
+    import json
+
+    from tests.research.test_writer import ScriptedLLM
+
+    duplo = ScriptedLLM(json.dumps({"prose": "A margem foi de 3,89% no exercicio."}))
+    monkeypatch.setattr("pat.cli._llm_client", lambda args: duplo)
+
+    codigo = main(["--home", home, "ask", "--plan-file", str(PLANO), "--writer"])
+    erro = capsys.readouterr().err
+
+    assert codigo == 1
+    assert "prose_rejected" in erro

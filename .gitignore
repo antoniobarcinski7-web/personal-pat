@@ -8,3 +8,4 @@ __pycache__/
 *.duckdb.wal
 .DS_Store
 .Rhistory
+.claude/

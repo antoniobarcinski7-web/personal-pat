@@ -1,0 +1,52 @@
+# Vale S.A. (cod_cvm 4170).
+#
+# Conferido contra a DFP 2023 (recebida em 2024-02-22) e a DFP 2024 (doc 145455
+# v3, 2025-03-17), ambas ja no bronze. A linha foi escolhida lendo
+# `pat accounts --cod-cvm 4170 --statement DFC_MI`.
+
+mapping_id      = "br:cnpj:33592510000154"
+mapping_version = "v1"
+framework       = "ifrs_cpc_br"
+taxonomy        = "cvm.plano_padronizado"
+jurisdiction    = "BR"
+source          = "cvm.dfp"
+parent          = "cvm.plano_padronizado/nao_financeiro"
+entity_id       = "br:cnpj:33592510000154"
+
+verified_by      = "antonio.barcinski"
+verified_against = "DFP CVM 2023 e 2024, cod_cvm 4170, escopos consolidado e individual"
+
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+6.01.01.06 "Depreciação, amortização e exaustão" e a linha de reversao de D&A na \
+conciliacao do fluxo de caixa indireto da Vale: parte do lucro antes dos \
+tributos e soma de volta a despesa que nao consumiu caixa. E a D&A reconhecida \
+no resultado do periodo - d_and_a_pnl com fidelidade exata, no lugar da \
+aproximacao pela DVA que a familia usa.
+
+Positiva na origem (reversao somada ao lucro), ja na convencao do conceito; \
+sign=+1.
+
+A exaustao entra aqui junto com depreciacao e amortizacao, e isso e correto \
+para uma mineradora: exaustao de mina e consumo de ativo de longo prazo \
+reconhecido no resultado, da mesma natureza economica que depreciacao. Nao e \
+uma aproximacao - e o mesmo conceito medido sobre uma classe de ativo \
+diferente.
+
+Confere com a DVA (7.04.01) em todos os exercicios conferidos: FY2024 16.525 \
+MM em ambas, FY2023 15.300 MM em ambas, FY2022 16.386 MM em ambas. A escolha \
+do DFC sobre a DVA aqui nao muda o numero hoje; muda a garantia, porque passa \
+a apontar para a demonstracao onde a grandeza e definida pelo que atravessou o \
+resultado, e nao pelo que foi retido do valor adicionado.
+
+O codigo 6.01.01.06 e especifico da Vale e nao pode subir para a familia. Note \
+que na Vale a numeracao de 6.01.01 tem buraco (nao existe .05), o que e mais um \
+motivo para nenhuma inferencia posicional.
+"""
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta  = "6.01.01.06"
+sign      = 1
+label_as_reported = "Depreciação, amortização e exaustão"

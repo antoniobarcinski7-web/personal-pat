@@ -1,0 +1,47 @@
+# WEG S.A. (cod_cvm 5410).
+#
+# Conferido contra a DFP 2023 (recebida em 2024-02-21) e a DFP 2024 (doc 145023
+# v1, 2025-02-26), ambas ja no bronze. A linha foi escolhida lendo
+# `pat accounts --cod-cvm 5410 --statement DFC_MI`.
+
+mapping_id      = "br:cnpj:84429695000111"
+mapping_version = "v1"
+framework       = "ifrs_cpc_br"
+taxonomy        = "cvm.plano_padronizado"
+jurisdiction    = "BR"
+source          = "cvm.dfp"
+parent          = "cvm.plano_padronizado/nao_financeiro"
+entity_id       = "br:cnpj:84429695000111"
+
+verified_by      = "antonio.barcinski"
+verified_against = "DFP CVM 2023 e 2024, cod_cvm 5410, escopo consolidado"
+
+[[binding]]
+concept_id = "d_and_a_pnl"
+fidelity   = "exact"
+equivalence_basis = """
+6.01.01.02 "Depreciação, Amortização e Exaustão" e a linha de reversao de D&A na \
+conciliacao do fluxo de caixa indireto da WEG: parte do lucro antes dos \
+impostos e soma de volta a despesa que nao consumiu caixa. E a D&A reconhecida \
+no resultado do periodo - d_and_a_pnl com fidelidade exata.
+
+Positiva na origem (reversao somada ao lucro), ja na convencao do conceito; \
+sign=+1.
+
+Confere com a DVA (7.04.01) em todos os exercicios conferidos: FY2024 812,5 MM, \
+FY2023 628,0 MM, FY2022 565,6 MM, iguais nas duas demonstracoes.
+
+Cuidado registrado sobre o escopo individual: a WEG S.A. publica a DRE \
+individual com receita 3.01 = 0 e D&A de 0,1 MM no DFC, porque o resultado \
+individual vem praticamente todo por equivalencia patrimonial. O binding \
+resolve nos dois escopos, mas metrica de margem no escopo individual nao existe \
+- e `margem_ebitda@v1` recusa com division_by_zero, que e a resposta correta. \
+Nada aqui tenta contornar isso.
+
+O codigo 6.01.01.02 e especifico da WEG e nao pode subir para a familia.
+"""
+[[binding.line]]
+statement = "DFC_MI"
+cd_conta  = "6.01.01.02"
+sign      = 1
+label_as_reported = "Depreciação, Amortização e Exaustão"

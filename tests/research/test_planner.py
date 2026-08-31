@@ -318,6 +318,88 @@ def test_snapshot_diferente_produz_prompt_diferente(question, snapshot):
     )
 
 
+# -- M4.1: o contexto conversacional -----------------------------------------
+
+
+def _contexto():
+    from pat.contracts.chat import ConversationContext, TurnPlanSummary
+
+    return ConversationContext(
+        as_of=date(2025, 6, 30),
+        turns=(
+            TurnPlanSummary(
+                question_text="Compare o EBITDA de Petrobras, Vale e WEG em FY2024.",
+                objective="EBITDA consolidado de tres companhias em FY2024",
+                entity_ids=("br:cnpj:33000167000101", "br:cnpj:84429695000111"),
+                metric_refs=("ebitda@v1",),
+                period_ends=(date(2024, 12, 31),),
+                scope=ReportingScope.CONSOLIDATED,
+                outcome="answered",
+            ),
+        ),
+    )
+
+
+def test_sem_contexto_o_prompt_e_o_de_sempre_byte_a_byte(question, snapshot):
+    """A evidencia de que o M4.1 nao mexeu em quem pergunta uma vez so.
+
+    `pat plan` e o primeiro turno de uma conversa tem que ser a MESMA chamada.
+    Se este teste ficar vermelho, todo o cache de planejador existente virou
+    MISS e a afirmacao "a conversa e uma casca sobre o pipeline" deixou de ser
+    conferivel.
+    """
+    from pat.research.planner import build_user_prompt
+
+    assert build_user_prompt(question, snapshot) == build_user_prompt(
+        question, snapshot, None
+    )
+    assert (
+        build_request(question, snapshot, model=MODELO).prompt_sha256
+        == build_request(question, snapshot, model=MODELO, context=None).prompt_sha256
+    )
+
+
+def test_o_contexto_muda_a_chamada(question, snapshot):
+    """Contexto diferente e pergunta diferente - e o `prompt_sha256` tem que
+    dizer isso, senao o cache serviria o plano de uma conversa para outra."""
+    com = build_request(question, snapshot, model=MODELO, context=_contexto())
+    sem = build_request(question, snapshot, model=MODELO)
+
+    assert com.prompt_sha256 != sem.prompt_sha256
+    assert "CONVERSA ATE AQUI" in com.user
+    assert "CONVERSA ATE AQUI" not in sem.user
+
+
+def test_o_contexto_chega_ao_prompt_como_estrutura(question, snapshot):
+    user = build_request(question, snapshot, model=MODELO, context=_contexto()).user
+
+    assert "br:cnpj:33000167000101" in user
+    assert "ebitda@v1" in user
+    assert "answered" in user
+
+
+def test_o_system_prompt_ensina_a_herdar_contexto_sem_herdar_limite():
+    """O turno 3 do caso de uso ("e como isso mudou desde 2023?") ACRESCENTA um
+    periodo. Sem esta instrucao o modelo planeja so o periodo herdado, e a
+    pergunta fica sem resposta por um motivo que ninguem consegue ver."""
+    texto = SYSTEM_PROMPT.lower()
+
+    assert "conversa ate aqui" in texto
+    assert "nao contem valores" in texto
+    assert "herdar contexto nao e herdar limite" in texto
+
+
+def test_o_system_prompt_recusa_a_pergunta_de_extremo():
+    """min/max devolvem o VALOR extremo, nunca QUAL insumo o produziu. Sem esta
+    secao o modelo planeja um `min` de tres delta_pct e o sistema devolve um
+    numero correto para uma pergunta que ninguem fez - o pior tipo de acerto."""
+    texto = SYSTEM_PROMPT.lower()
+
+    assert "atribuicao" in texto
+    assert "argmin" in texto
+    assert "unsupported_question" in texto
+
+
 def test_o_prompt_e_serializado_canonicamente_e_nao_por_repr(question, snapshot):
     """`repr()` nao promete estabilidade entre versoes de Python; um prompt
     que muda sozinho e um cache que nunca acerta."""

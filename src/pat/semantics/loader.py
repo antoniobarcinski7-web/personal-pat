@@ -10,6 +10,11 @@ Resolucao, do mais especifico para o menos:
     2. cadeia de `parent` desse mapeamento
     3. familia default da fonte        -> mapping_confirmed=False
 
+O passo 1 exige conteudo: um arquivo de empresa **sem nenhum binding** e
+recusado no load. Ele confirmaria a cadeia sem que ninguem tivesse conferido
+uma linha, e `mapping_confirmed` passaria a significar "alguem criou um
+arquivo" em vez de "alguem conferiu".
+
 O passo 3 nunca e silencioso: quando um numero sai da familia default sem
 mapeamento conferido para a empresa, o resultado carrega
 `mapping_confirmed=False` ate o fim. Cair no default e razoavel para explorar;
@@ -107,6 +112,20 @@ def parse_mapping(raw: bytes, *, where: str) -> Mapping:
             )
         )
 
+    entity_id = data.get("entity_id")
+    if entity_id and not bindings:
+        # Sem esta recusa, um arquivo com so `entity_id` e `parent` marcaria a
+        # cadeia como `confirmed=True` sem que ninguem tivesse conferido uma
+        # unica linha - e `mapping_confirmed` deixaria de significar "um humano
+        # olhou". A confirmacao tem que custar pelo menos um binding escrito.
+        raise MappingError(
+            f"{where}: mapeamento de empresa sem nenhum binding. Um arquivo que so "
+            "declara entity_id e parent confirmaria a cadeia sem conferencia "
+            "nenhuma. Escreva ao menos um binding com equivalence_basis, ou apague "
+            "o arquivo e deixe a empresa cair na familia default (que sai com "
+            "mapping_confirmed=False, como deve)."
+        )
+
     return Mapping(
         mapping_id=str(_require(data, "mapping_id", where)),
         mapping_version=str(_require(data, "mapping_version", where)),
@@ -116,7 +135,7 @@ def parse_mapping(raw: bytes, *, where: str) -> Mapping:
         source=str(_require(data, "source", where)),
         source_sha256=hashlib.sha256(raw).hexdigest(),
         parent=data.get("parent"),
-        entity_id=data.get("entity_id"),
+        entity_id=entity_id,
         is_default_for_source=bool(data.get("is_default_for_source", False)),
         verified_by=data.get("verified_by"),
         verified_against=data.get("verified_against"),

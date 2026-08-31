@@ -260,9 +260,10 @@ que era verdade. É esse o critério de conclusão da Fase 1.
 
 ### Pesquisa (L3) — o caminho determinístico
 
-Milestone 1 da Fase 3: o pipeline inteiro roda **sem LLM**. Um plano declarativo
-em JSON substitui o planejador enquanto ele não existe, o que também é a forma de
-provar que o resto não depende dele.
+O pipeline inteiro roda **sem LLM**, e continua sendo o default. Um plano
+declarativo em JSON entra no lugar do planejador, o que é a forma de provar que
+o resto não depende dele: nenhum número do sistema precisa de um modelo para
+existir.
 
 ```bash
 pat capability              # o que o sistema sabe executar, e o hash disso
@@ -278,7 +279,39 @@ pat runs --research <manifest_id>    # uma corrida específica
 O `capability snapshot` diz **o que existe** — conceitos, métricas, mapeamentos,
 empresas, períodos cobertos, derivações disponíveis — e nunca **quanto vale**:
 não há um único `Decimal` nele, e há teste que falha se aparecer. É a única coisa
-que o planejador verá quando existir.
+que o planejador vê.
+
+### Pesquisa (L3) — o caminho com modelo
+
+São **duas invocações**, de propósito: o plano sai em disco, um humano lê o que
+o modelo escolheu, e só então alguma coisa executa. Encadear os dois faria a
+primeira execução de um plano acontecer antes de qualquer chance de revisá-lo.
+
+```bash
+export ANTHROPIC_API_KEY=...
+
+pat plan "Qual foi a margem EBITDA do GPA em 2024?" --as-of 2025-06-30 --out p.json
+pat ask --plan-file p.json --writer
+```
+
+O LLM entra em exatamente dois pontos, e em nenhum deles produz um número:
+
+- **Planejador** — pergunta → `ResearchPlan`. A gramática de plano não tem onde
+  escrever um valor; não existe campo para isso.
+- **Escritor** — resultados → prosa. Ele não *recebe* os números: o prompt leva
+  rótulo e token (`{{s:margin_fy2024}}`), nunca o valor. A substituição é
+  determinística e acontece depois. Não dá para copiar um número que nunca foi
+  mostrado.
+
+Sem `--writer`, `pat ask` não chama modelo nenhum. Os dois comandos falham
+dizendo que falta `ANTHROPIC_API_KEY` em vez de cair para um modo degradado, e
+prosa recusada pela regra do dígito **não** vira prosa determinística em
+silêncio — apresentar um texto que ninguém pediu como se fosse o pedido é pior
+do que falhar.
+
+Cada chamada fica gravada em `llm_call` com o papel (`planner`/`writer`), o
+hash do prompt e da resposta, e o `client_fingerprint`. A do planejador nasce
+órfã (planejar não executa nada); a do escritor nasce ligada ao manifesto.
 
 `ask` valida o plano antes de executá-lo, e o executor só aceita plano
 certificado — não há caminho que aceite um `ResearchPlan` cru. Toda saída
@@ -299,21 +332,89 @@ capability, métricas, mapeamentos, fatos-folha, versão do `pat` e `git_sha`.
 Uma corrida cujo resultado não pôde ser calculado **também** é registrada — a
 auditoria de por que não houve resposta vale tanto quanto a de por que houve.
 
+### Conversa (L4) — a interface local
+
+```bash
+export ANTHROPIC_API_KEY=...
+pat serve                      # http://127.0.0.1:8765
+```
+
+O chat é uma **casca** sobre o caminho acima, e não um caminho novo. Cada
+mensagem é uma execução completa de `pat plan` + `pat ask --writer` em processo:
+duas chamadas de modelo, um manifesto em `research_run`, duas linhas em
+`llm_call`. Nada é reaproveitado entre turnos.
+
+O histórico da conversa entra em **um lugar só** — o prompt do planejador — e
+carrega apenas estrutura: que empresas, que métricas, que períodos e que escopo
+foram planejados antes, e se o turno foi recusado. `ConversationContext` não tem
+campo capaz de carregar um `Decimal`, do mesmo jeito que `MetricStep` não tem.
+É isso que faz "todo número vem do motor, recalculado neste turno" ser uma
+propriedade da forma do tipo, e não uma instrução de prompt.
+
+O follow-up funciona por interpretação, nunca por herança de limite:
+
+```
+você  Compare o EBITDA de Petrobras, Vale e WEG em FY2024.
+PAT   … R$ 272.00 bn … R$ 81.00 bn … R$ 6.70 bn        [Ver plano] [Ver fontes]
+você  E a margem EBITDA?                    → mesmas empresas, mesmo período
+você  E como isso mudou desde 2023?         → mesmas empresas, período ACRESCENTADO
+você  Qual teve a maior queda?              → recusa nomeada
+```
+
+A última recusa é o comportamento correto: `min` e `max` devolvem o valor
+extremo, nunca *qual* insumo o produziu, e responder exigiria um `argmin` que
+não existe. Devolver o menor `delta_pct` sem dizer de quem ele é seria um número
+certo para uma pergunta que ninguém fez.
+
+Os `pinned_*` da UI continuam sendo o que o **usuário** fixou. Contexto de
+conversa não vira pino — herdar `pinned_periods=(2024,)` faria "desde 2023" ser
+recusado com `PIN_CONTRADICTED_PERIOD`.
+
+Todo turno é auditável pelas mesmas portas de sempre:
+
+```bash
+pat runs --research <manifest_id>              # a corrida que produziu a resposta
+curl localhost:8765/api/turn/<sessao>/<n>/plan > p.json
+pat ask --plan-file p.json                     # reproduz os números, SEM modelo
+```
+
+O servidor é `http.server` da biblioteca padrão, escuta só em `127.0.0.1`, não
+tem autenticação e não deve ser exposto. O log das sessões fica em `data/chat/`
+e é conveniência de UI: apagá-lo não perde nada auditável, porque a auditoria
+mora em `research_run` e `llm_call`.
+
 ### Testes
 
 ```bash
-uv run pytest              # suite padrão (sem rede) — 406 testes
-uv run pytest tests/research  # só a camada de pesquisa — 163
+uv run pytest              # suite padrão (sem rede, sem LLM) — 626 testes
+uv run pytest tests/research  # só a camada de pesquisa — 383
 uv run pytest -m network   # contra a CVM real — 11 testes
+uv run pytest -m llm       # contra a API real — 13 testes (gasta token)
 ```
 
+Os dois marcadores estão desligados no `addopts` por razões diferentes:
+`network` depende de terceiro, `llm` gasta credencial. Nenhum dos dois roda por
+acidente, e há teste conferindo que continua assim
+(`test_layering_research.py::test_a_suite_padrao_desliga_os_marcadores_que_custam`).
+
 Se `pat` falhar com `ModuleNotFoundError: No module named 'pat'` logo depois de
-um `uv sync` que terminou sem erro, cheque `stat -f '%Sf' .venv/lib/python*/site-packages/*.pth`:
+um `uv sync` que terminou sem erro, cheque `ls -lO .venv/lib/python*/site-packages/*.pth`:
 o CPython 3.13+ **ignora `.pth` marcado como oculto** (um arquivo escondido não
-deve injetar `sys.path` em silêncio), e basta um `chflags -R hidden .venv` feito
-por qualquer utilitário para o editable install parar de valer. `chflags -R
-nohidden .venv` resolve. Os testes não pegam isso porque o pytest injeta
-`pythonpath = ["src"]` por conta própria.
+deve injetar `sys.path` em silêncio), e o `uv` marca os `.pth` do editable
+install exatamente assim no macOS. `chflags -R nohidden .venv` resolve.
+
+O que a nota anterior não dizia, e que importa na prática: **o `uv run` volta a
+marcar o arquivo como oculto**, então o `chflags` não é definitivo — todo `uv
+run` desfaz o conserto do `.venv/bin/pat` seguinte. Duas saídas que funcionam
+sempre:
+
+```bash
+PYTHONPATH=src .venv/bin/pat ...          # ignora o .pth de vez
+find .venv -name '*.pth' -exec chflags nohidden {} \;   # depois de cada uv run
+```
+
+Os testes não pegam isso porque o pytest injeta `pythonpath = ["src"]` por
+conta própria — é por isso que `uv run pytest` passa com o entry point quebrado.
 
 `uv lock --check` verifica que o lockfile ainda reflete o `pyproject.toml`.
 Nunca instale com dependências resolvidas na hora: `--locked` é o que mantém I3.
@@ -392,8 +493,8 @@ reconstruído a partir dos sidecars. O inverso não é verdade.
 | **0** | contratos, bronze, provider CVM, catálogo | todo byte rastreável à origem | ✅ |
 | **1** | silver + gold bitemporal + `query AS OF` | consulta prova diferença antes/depois de uma reapresentação | ✅ |
 | **2** | semantics: conceitos universais, mapeamentos por regime, métricas versionadas | golden tests batendo com demonstrações conferidas à mão | ✅ |
-| **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ◑ |
-| **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | |
+| **3** | camada de pesquisa controlada: plano declarativo, validador, executor determinístico, renderer, manifesto | `pat ask` produz o número certo, com citação até o byte, sem LLM no caminho do cálculo | ✅ |
+| **4** | planner e writer atrás de um Protocol; cache e procedência de modelo | relatório com toda afirmação citando `fact_id`, e nenhum dígito escrito pelo modelo | ✅ |
 | **5** | B3 (preços, proventos), BCB, IBGE | | |
 | **6** | SEC EDGAR (EUA) — reusa `contracts`, novo provider | | |
 
@@ -402,8 +503,15 @@ não há sandbox a proteger. O modelo escolhe **o que** perguntar, dentro de uma
 gramática fechada onde um número literal é inexprimível; o cálculo continua sendo
 o motor da Fase 2. É uma superfície de ataque menor e uma garantia mais forte —
 não "o LLM foi instruído a não calcular", e sim "não há onde ele escreveria um
-número". O Milestone 1 (núcleo determinístico) está fechado; planner e writer são
-os Milestones 2 e 3, detalhados em `docs/phase3_proposal.md`.
+número". Os três milestones estão fechados: M1 (núcleo determinístico), M2
+(planner, porta de LLM, cache e procedência) e M3 (writer), detalhados em
+`docs/phase3_proposal.md`.
+
+Nota de numeração: o que a tabela chamava de Fase 4 foi entregue **dentro** da
+Fase 3, como M2 e M3 — o planner e o writer nasceram atrás do mesmo Protocol
+previsto ali. A linha 4 fica marcada como concluída em vez de renumerada,
+porque o critério dela é o que os testes hoje verificam. As Fases 5 e 6
+continuam intocadas.
 
 **Fases 0–2 antes de qualquer linha de agente.** Um agente sobre dados não confiáveis
 produz erros eloquentes e confiantes — o pior resultado possível para research.

@@ -79,12 +79,26 @@ def describe(result: ComputationResult) -> str:
 
     E isto que o escritor recebe no Milestone 2 - rotulo e token, nunca o
     numero formatado. Nao da para copiar um valor que nunca foi mostrado.
+
+    A COMPANHIA E PARTE DO QUE O NUMERO E. Ate o M4.1 nao era: a descricao
+    dizia metrica, escopo, periodo e datas, e nada mais. Numa comparacao entre
+    empresas no mesmo periodo isso produz descricoes IDENTICAS para resultados
+    diferentes, e a unica coisa que resta ao escritor para atribuir cada
+    numero a cada empresa e o `step_id` que o planejador escolheu. Um sistema
+    que acerta porque o modelo escolheu bons nomes nao tem a propriedade - tem
+    sorte. `entity_id` e `display_name` sempre estiveram em `MetricResult`;
+    faltava le-los.
+
+    Continua sem valor nenhum: `display_name` e razao social, nao grandeza. O
+    guard que exige que o escritor nunca veja um numero (`test_o_escritor_nao_
+    le_valor_nenhum`) segue valendo palavra por palavra.
     """
     if result.kind is ResultKind.METRIC:
         metric = result.metric_result
         escopo = "consolidado" if metric.scope == "consolidated" else "individual"
+        quem = metric.display_name or metric.entity_id
         return (
-            f"{metric.metric}@{metric.metric_version}, {escopo}, exercicio findo em "
+            f"{metric.metric}@{metric.metric_version}, {quem}, {escopo}, exercicio findo em "
             f"{metric.period_end}, conhecido em {metric.knowledge_date}, AS OF {metric.as_of}"
         )
     derivada = result.derived

@@ -19,6 +19,8 @@ from pat.contracts.research import (
     ResearchPlan,
     ResearchQuestion,
     ResultKind,
+    UnresolvedItem,
+    UnresolvedKind,
 )
 from pat.contracts.semantics import Dimension, Fidelity, MetricRef, ReportingScope
 
@@ -84,7 +86,11 @@ def test_plano_recusa_step_id_fora_do_padrao():
 
 
 def test_plano_vazio_e_sem_saida_nao_existe():
-    """EMPTY_PLAN e NO_OUTPUT sao pegos no contrato, nao no validador."""
+    """EMPTY_PLAN e NO_OUTPUT sao pegos no contrato, nao no validador.
+
+    Vale para o plano que PRETENDE calcular - isto e, sem `unresolved`. O plano
+    que devolve duvida tem outra regra, logo abaixo.
+    """
     passo = MetricStep(
         step_id="a", metric=MetricRef.parse("ebitda@v1"), entity_id="e", period_end=date(2023, 12, 31)
     )
@@ -97,6 +103,73 @@ def test_plano_vazio_e_sem_saida_nao_existe():
         ResearchPlan(
             question_id=SHA, objective="o", as_of=date(2025, 6, 30),
             scope=ReportingScope.CONSOLIDATED, steps=(passo,), outputs=(),
+        )
+
+
+def test_recusar_e_expressavel_na_gramatica():
+    """A gramatica sabe dizer "nao sei", e nao so "calcule isto".
+
+    Ate a M4.1 nao sabia: `steps` e `outputs` exigiam pelo menos um item, entao
+    o planejador que devolvesse a duvida com zero passos - a coisa certa - tinha
+    a recusa rejeitada como violacao de contrato. O usuario via "o modelo nao
+    produziu uma saida valida", que culpa o modelo justamente quando ele
+    acertou, e os candidatos que ele ofereceu para desambiguar eram perdidos.
+
+    Este teste e o caso real que expos o buraco: uma pergunta ambigua num chat,
+    respondida com `unresolved` e tres alternativas concretas.
+    """
+    plano = ResearchPlan(
+        question_id=SHA,
+        objective="Esclarecer a que 'demais series' a pergunta se refere",
+        as_of=date(2025, 6, 30),
+        scope=ReportingScope.CONSOLIDATED,
+        steps=(),
+        outputs=(),
+        unresolved=(
+            UnresolvedItem(
+                kind=UnresolvedKind.UNSUPPORTED_QUESTION,
+                detail="'demais series' nao diz quais",
+                candidates=("outras metricas", "outras empresas"),
+            ),
+        ),
+    )
+
+    assert plano.is_refusal
+    assert plano.steps == ()
+    assert plano.unresolved[0].candidates == ("outras metricas", "outras empresas")
+
+
+def test_um_plano_de_recusa_pode_ate_carregar_passos():
+    """`is_refusal` distingue os dois casos sem obrigar o planejador a escolher.
+
+    Um plano pode trazer parte do calculo E uma pendencia - e nesse caso ele
+    continua nao executando (o validador recusa por PLAN_NOT_EXECUTABLE), mas
+    nao e uma recusa pura. A distincao existe para que quem le nao tenha que
+    deduzir a intencao de um `steps` vazio.
+    """
+    passo = MetricStep(
+        step_id="a", metric=MetricRef.parse("ebitda@v1"), entity_id="e", period_end=date(2023, 12, 31)
+    )
+    plano = ResearchPlan(
+        question_id=SHA, objective="o", as_of=date(2025, 6, 30),
+        scope=ReportingScope.CONSOLIDATED, steps=(passo,), outputs=("a",),
+        unresolved=(UnresolvedItem(kind=UnresolvedKind.AMBIGUOUS_PERIOD, detail="que ano?"),),
+    )
+
+    assert not plano.is_refusal
+
+
+def test_plano_sem_passo_e_sem_pendencia_continua_impossivel():
+    """O afrouxamento e CONDICIONAL, e nao geral.
+
+    Sem `unresolved`, plano vazio continua sendo erro na fronteira de entrada.
+    Um plano que nao calcula nada e nao diz por que seria uma resposta vazia
+    apresentada como se fosse resposta.
+    """
+    with pytest.raises(ValidationError, match="pendencia"):
+        ResearchPlan(
+            question_id=SHA, objective="o", as_of=date(2025, 6, 30),
+            scope=ReportingScope.CONSOLIDATED, steps=(), outputs=(),
         )
 
 

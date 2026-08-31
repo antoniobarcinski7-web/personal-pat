@@ -33,5 +33,11 @@ testpaths = ["tests"]
 # `tests.conftest`, com nome qualificado. Importar `conftest` solto colide
 # assim que existe mais de um conftest.py na arvore de testes.
 pythonpath = ["src", "."]
-addopts = "-q -m 'not network'"
-markers = ["network: exige acesso a rede (fontes publicas reais)"]
+# Dois marcadores desligados por default, por razoes diferentes: `network`
+# depende de terceiro, `llm` gasta credencial e token. Nenhum dos dois pode
+# rodar por acidente em `pytest`.
+addopts = "-q -m 'not network and not llm'"
+markers = [
+    "network: exige acesso a rede (fontes publicas reais)",
+    "llm: chama a API real do modelo (exige ANTHROPIC_API_KEY, consome token)",
+]
