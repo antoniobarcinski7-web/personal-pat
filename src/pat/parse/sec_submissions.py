@@ -22,11 +22,19 @@ de `params`. E a mesma fronteira que faz `sources/` nao abrir ZIP.
 Paginacao
 ---------
 A SEC divide o historico: os arquivamentos recentes vem em `filings.recent`, e
-os antigos em arquivos separados listados em `filings.files`. Este parser le
-`recent` e DECLARA quantos ficaram de fora, em vez de fingir que o historico
+os antigos em arquivos separados listados em `filings.files`. `parse_submissions`
+le `recent` e DECLARA quantos ficaram de fora, em vez de fingir que o historico
 acabou ali - uma companhia com muitos arquivamentos tem anos inteiros fora do
 `recent`, e um sistema que nao dissesse isso apresentaria "nao ha 10-K de 2015"
 quando o certo e "o indice recente nao alcanca 2015".
+
+`parse_submissions_page` le uma dessas paginas anteriores. Ela tem forma
+DIFERENTE, e a diferenca importa: a pagina e um JSON PLANO - as colunas na
+raiz, sem `filings.recent` - e nao carrega `cik` nem `name`. A identidade da
+companhia tem que vir de fora, de quem pediu a pagina. Por isso as duas funcoes
+existem em vez de uma que adivinha a forma: uma pagina que chegasse no lugar do
+indice completo produziria uma companhia sem nome, e o nome so faltaria bem
+depois, no titulo de um documento.
 """
 
 from __future__ import annotations
@@ -41,6 +49,7 @@ __all__ = [
     "FORM_TO_KIND",
     "SubmissionsIndex",
     "parse_submissions",
+    "parse_submissions_page",
 ]
 
 DATASET = "sec.filing_doc"
@@ -134,6 +143,66 @@ def parse_submissions(
         if f.get("name")
     )
 
+    candidatos, sem_documento = _candidatos(recentes, cik, forms=forms, since=since)
+
+    return SubmissionsIndex(
+        cik=cik,
+        entity_name=nome,
+        candidates=candidatos,
+        older_files=antigos,
+        skipped_no_document=sem_documento,
+    )
+
+
+def parse_submissions_page(
+    payload: bytes,
+    *,
+    cik: str,
+    entity_name: str,
+    forms: tuple[str, ...] = (),
+    since: date | None = None,
+) -> SubmissionsIndex:
+    """Uma pagina ANTERIOR do historico -> candidatos. Mesmo contrato de saida.
+
+    `cik` e `entity_name` sao exigidos porque a pagina nao os traz: ela e so as
+    colunas. Passa-los explicitamente e o que impede a companhia de chegar sem
+    nome no catalogo - o tipo de falta que so aparece tres camadas adiante.
+
+    `older_files` sai vazio de proposito: uma pagina nao aponta para outras. Quem
+    sabe quantas existem e o indice completo, e e la que a contagem vive.
+    """
+    dados = json.loads(payload)
+    if "filings" in dados:
+        raise ValueError(
+            "isto e o indice completo, nao uma pagina; use parse_submissions"
+        )
+    if not isinstance(dados.get("accessionNumber"), list):
+        raise ValueError("pagina de submissions sem colunas; layout mudou na origem")
+
+    chave = str(cik).zfill(10)
+    candidatos, sem_documento = _candidatos(dados, chave, forms=forms, since=since)
+    return SubmissionsIndex(
+        cik=chave,
+        entity_name=entity_name,
+        candidates=candidatos,
+        older_files=(),
+        skipped_no_document=sem_documento,
+    )
+
+
+def _candidatos(
+    dados_brutos: dict,
+    cik: str,
+    *,
+    forms: tuple[str, ...],
+    since: date | None,
+) -> tuple[list[DocumentCandidate], int]:
+    """As colunas -> candidatos. Comum as duas formas do indice.
+
+    Existe para que a pagina anterior e o indice recente produzam candidatos
+    IDENTICOS em forma. Se a montagem fosse duplicada, um `DocumentKind` novo
+    acrescentado num lado passaria a divergir do outro sem ninguem notar.
+    """
     colunas = (
         "accessionNumber",
         "filingDate",
@@ -142,7 +211,7 @@ def parse_submissions(
         "primaryDocument",
         "primaryDocDescription",
     )
-    dados = {c: recentes.get(c) or [] for c in colunas}
+    dados = {c: dados_brutos.get(c) or [] for c in colunas}
     total = len(dados["accessionNumber"])
 
     candidatos: list[DocumentCandidate] = []
@@ -202,13 +271,7 @@ def parse_submissions(
             )
         )
 
-    return SubmissionsIndex(
-        cik=cik,
-        entity_name=nome,
-        candidates=candidatos,
-        older_files=antigos,
-        skipped_no_document=sem_documento,
-    )
+    return candidatos, sem_documento
 
 
 def _data(bruto) -> date | None:

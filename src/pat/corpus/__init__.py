@@ -50,8 +50,12 @@ __all__ = [
     "DOCUMENT_DATASET",
     "SyncOutcome",
     "SUBMISSIONS_DATASET",
+    "FILING_INDEX_DATASET",
+    "SUBMISSIONS_PAGE_DATASET",
     "catalog_entries",
     "sec_candidates",
+    "sec_exhibit_candidates",
+    "sec_history_candidates",
     "sync_documents",
     "verify_unit",
 ]
@@ -409,3 +413,165 @@ def sec_candidates(
         bronze.read(rows[0][0]), forms=forms, since=since
     )
 
+
+FILING_INDEX_DATASET = "sec.filing_index"
+
+
+@dataclass
+class ExhibitDiscovery:
+    """O que a varredura de exibicoes achou, e o que ela nao soube classificar.
+
+    `unknown_types` sobe ate a CLI de proposito. Uma exibicao que o arquivamento
+    tem e a tabela nao reconhece e uma lacuna acionavel - alguem pode querer
+    acrescentar `EX-10.1` a `EXHIBIT_TYPE_TO_KIND` -, e uma lacuna que ninguem
+    ve nunca e fechada.
+    """
+
+    candidates: list = field(default_factory=list)
+    indexes_fetched: int = 0
+    accessions: int = 0
+    unknown_types: dict = field(default_factory=dict)
+
+
+def sec_exhibit_candidates(
+    parents,
+    *,
+    cik: str,
+    registry: Registry,
+    bronze: BronzeStore,
+    catalog: Catalog,
+    run: Run,
+    limit: int | None = None,
+) -> ExhibitDiscovery:
+    """Candidatos de arquivamento -> candidatos das EXIBICOES deles. Usa rede.
+
+    Duas etapas porque a origem tem duas: o indice de submissions declara so o
+    documento principal de cada accession, e descobrir o resto exige buscar o
+    indice DAQUELE accession. Sao dois recursos, e por isso dois datasets.
+
+    A busca do indice passa por `ingest_dataset` como qualquer outra: o indice
+    e um recurso da origem e vai para o bronze com procedencia propria, imutavel
+    como o accession que ele descreve. Ler o indice sem grava-lo faria a
+    descoberta ser irreproduzivel - a lista de exibicoes de um arquivamento
+    passaria a depender do dia em que alguem rodou.
+
+    `parents` sao `DocumentCandidate` vindos de `sec_candidates`: e deles que
+    vem a data de entrega canonica, que as exibicoes herdam para cair sob o
+    mesmo corte `AS OF` da capa que as anuncia.
+    """
+    from pat.parse.sec_filing_index import exhibit_candidates, parse_filing_index
+
+    resultado = ExhibitDiscovery()
+    selecionados = list(parents) if limit is None else list(parents)[:limit]
+
+    # Um accession pode aparecer em mais de um candidato; buscar o indice dele
+    # duas vezes seria pedir a mesma coisa a origem duas vezes.
+    vistos: set[str] = set()
+    for pai in selecionados:
+        params = dict(pai.params)
+        accession = params.get("accession")
+        if not accession or accession in vistos:
+            continue
+        vistos.add(accession)
+        resultado.accessions += 1
+
+        results = ingest_dataset(
+            FILING_INDEX_DATASET,
+            {"cik": str(cik).zfill(10), "accession": accession},
+            registry=registry,
+            store=bronze,
+            catalog=catalog,
+            run=run,
+        )
+        for result in results:
+            resultado.indexes_fetched += 1
+            try:
+                indice = parse_filing_index(bronze.read(result.document.content_sha256))
+            except ValueError:
+                # Layout inesperado num accession nao pode derrubar a varredura
+                # inteira: o indice ja esta no bronze e pode ser reprocessado.
+                continue
+            if indice.unknown_types:
+                resultado.unknown_types[accession] = indice.unknown_types
+            resultado.candidates.extend(
+                exhibit_candidates(
+                    indice,
+                    cik=cik,
+                    published_at=pai.published_at,
+                    reference_date=pai.reference_date,
+                )
+            )
+    return resultado
+
+
+SUBMISSIONS_PAGE_DATASET = "sec.submissions_page"
+
+
+@dataclass
+class HistoryDiscovery:
+    """O historico anterior ao indice recente, pagina por pagina."""
+
+    candidates: list = field(default_factory=list)
+    pages_fetched: int = 0
+    pages_declared: int = 0
+    earliest: object = None
+    skipped_no_document: int = 0
+
+
+def sec_history_candidates(
+    indice,
+    *,
+    cik: str,
+    registry: Registry,
+    bronze: BronzeStore,
+    catalog: Catalog,
+    run: Run,
+    forms: tuple[str, ...] = (),
+    since=None,
+) -> HistoryDiscovery:
+    """As paginas anteriores do historico -> candidatos. Usa rede.
+
+    O indice recente da SEC nao alcanca o passado: ele declara em
+    `filings.files` os arquivos que faltam, e `sec_candidates` ja contava
+    quantos eram. Esta funcao busca esses arquivos.
+
+    A distincao que isto fecha e a que `SubmissionsIndex.older_files` existia
+    para nomear: "a companhia nao arquivou" e "o indice recente nao alcanca"
+    chegam as duas como ausencia e pedem acoes opostas. Ate aqui o sistema sabia
+    dizer qual das duas era; agora ele resolve a segunda.
+
+    O nome de cada pagina vem do indice, nunca construido: quem declara como o
+    historico esta paginado e a origem. O provider so valida e monta a URL.
+    """
+    from pat.parse.sec_submissions import parse_submissions_page
+
+    resultado = HistoryDiscovery(pages_declared=len(indice.older_files))
+    for arquivo in indice.older_files:
+        results = ingest_dataset(
+            SUBMISSIONS_PAGE_DATASET,
+            {"cik": str(cik).zfill(10), "file": arquivo},
+            registry=registry,
+            store=bronze,
+            catalog=catalog,
+            run=run,
+        )
+        for result in results:
+            resultado.pages_fetched += 1
+            try:
+                pagina = parse_submissions_page(
+                    bronze.read(result.document.content_sha256),
+                    cik=cik,
+                    entity_name=indice.entity_name,
+                    forms=forms,
+                    since=since,
+                )
+            except ValueError:
+                # Pagina com layout inesperado nao derruba as outras: os bytes
+                # ja estao no bronze e podem ser reprocessados sem rede.
+                continue
+            resultado.candidates.extend(pagina.candidates)
+            resultado.skipped_no_document += pagina.skipped_no_document
+
+    if resultado.candidates:
+        resultado.earliest = min(c.published_at for c in resultado.candidates)
+    return resultado

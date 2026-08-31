@@ -1475,11 +1475,71 @@ def _docs_sync_sec(args, *, bronze, catalog, conn, entity_id: str, denom: str) -
     run = new_run(f"docs --sync --cik {args.cik} formas={formas}")
     catalog.start_run(run)
     registry = Registry()
+    entradas = list(indice.candidates)
     try:
+        if getattr(args, "history", False) and indice.older_files:
+            from pat.corpus import sec_history_candidates
+
+            historico = sec_history_candidates(
+                indice,
+                cik=args.cik,
+                registry=registry,
+                bronze=bronze,
+                catalog=catalog,
+                run=run,
+                forms=formas,
+                since=args.since,
+            )
+            print(
+                f"  historico: {historico.pages_fetched}/{historico.pages_declared} "
+                f"pagina(s) -> {len(historico.candidates)} arquivamento(s) anterior(es)"
+                + (
+                    f", o mais antigo de {historico.earliest}"
+                    if historico.earliest
+                    else ""
+                )
+            )
+            entradas = entradas + historico.candidates
+
+        if getattr(args, "exhibits", False):
+            from pat.corpus import sec_exhibit_candidates
+
+            descoberta = sec_exhibit_candidates(
+                # `entradas`, e nao `indice.candidates`: com --history a carta
+                # ao acionista de um ano antigo esta anexa a um 8-K que so
+                # existe numa pagina anterior do historico.
+                entradas,
+                cik=args.cik,
+                registry=registry,
+                bronze=bronze,
+                catalog=catalog,
+                run=run,
+                limit=args.limit,
+            )
+            print(
+                f"  exibicoes: {descoberta.indexes_fetched} indice(s) de "
+                f"{descoberta.accessions} arquivamento(s) -> "
+                f"{len(descoberta.candidates)} exibicao(oes) reconhecida(s)"
+            )
+            if descoberta.unknown_types:
+                # Tipo que o arquivamento tem e a tabela nao reconhece. Contar e
+                # nomear, porque "nao ingerimos" e diferente de "nao existe" e as
+                # duas chegam como ausencia.
+                nao_lidos = sorted(
+                    {t for tipos in descoberta.unknown_types.values() for t in tipos}
+                )
+                print(
+                    f"  ({len(nao_lidos)} tipo(s) de exibicao NAO reconhecidos, "
+                    f"nao ingeridos: {', '.join(nao_lidos[:8])}"
+                    + (" ..." if len(nao_lidos) > 8 else "")
+                    + ")"
+                )
+            entradas = entradas + descoberta.candidates
+
         outcome = sync_documents(
             conn,
             entity_id=entity_id,
-            entries=list(indice.candidates),
+            entries=entradas,
             registry=registry,
             bronze=bronze,
             catalog=catalog,
@@ -2846,6 +2906,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="busca do catalogo IPE os documentos ainda ausentes (usa rede)",
     )
     p_docs.add_argument("--year", type=int, help="ano do catalogo IPE, exigido por --sync")
+    p_docs.add_argument(
+        "--history",
+        action="store_true",
+        help=(
+            "SEC: busca tambem as paginas ANTERIORES do historico de "
+            "arquivamentos, nao so o indice recente. E o que alcanca os anos "
+            "antigos - na Netflix, o prospecto do IPO de 2002. Uma requisicao "
+            "por pagina declarada"
+        ),
+    )
+    p_docs.add_argument(
+        "--exhibits",
+        action="store_true",
+        help=(
+            "SEC: busca tambem as exibicoes de cada arquivamento (EX-99.1), nao so "
+            "o documento principal. E onde vive a carta aos acionistas: num 8-K de "
+            "resultado o principal e a folha de rosto. Custa uma requisicao de "
+            "indice por arquivamento"
+        ),
+    )
     p_docs.add_argument("--kind", action="append", default=[], help="filtra por DocumentKind")
     p_docs.add_argument(
         "--as-of",

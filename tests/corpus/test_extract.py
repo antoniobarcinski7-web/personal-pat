@@ -7,11 +7,13 @@ import pypdf
 from pat.contracts.corpus import ExtractionFailureReason, LocatorScheme
 from pat.corpus.extract import (
     EXTRACTION_VERSION,
+    HTML_MEDIA_TYPE,
     MAX_UNIT_CHARS,
     extract,
     extract_pdf_page_texts,
     sniff_media_type,
 )
+from pat.corpus.extract_html import extract_html_text
 from tests.corpus.conftest import make_pdf, make_pdf_without_text
 
 DOC = "a" * 64
@@ -181,3 +183,33 @@ def test_o_tipo_e_lido_dos_bytes_e_nao_do_header():
     assert sniff_media_type(b"PK\x03\x04qualquer") == "application/zip"
     assert sniff_media_type(b"<!DOCTYPE html><p>oi") == "text/html"
     assert sniff_media_type(b"\x00\x01\x02") is None
+
+
+def test_exibicao_da_sec_vem_no_envelope_sgml_e_ainda_e_html():
+    """As 17 cartas ao acionista da Netflix falharam por causa disto.
+
+    O documento principal de um 10-K comeca em `<?xml` ou `<html`; a EXIBICAO
+    do mesmo arquivamento vem embrulhada no envelope SGML - `<DOCUMENT>`,
+    `<TYPE>`, `<TEXT>` - e so entao abre o HTML. Sem reconhecer o envelope,
+    toda carta ao acionista entra no bronze e falha a extracao com
+    `unsupported_media_type`: a evidencia esta guardada e ilegivel.
+    """
+    payload = (
+        b"<DOCUMENT>\n<TYPE>EX-99.1\n<SEQUENCE>2\n"
+        b"<FILENAME>ex991_q425.htm\n<DESCRIPTION>EX-99.1\n<TEXT>\n"
+        b"<html><head><title>Document</title></head>"
+        b"<body><p>Fellow shareholders,</p></body></html>"
+    )
+    assert sniff_media_type(payload) == HTML_MEDIA_TYPE
+    assert "Fellow shareholders," in extract_html_text(payload)
+
+
+def test_o_envelope_sgml_sozinho_nao_e_html():
+    """A checagem exige o envelope E o `<html` depois dele: um envelope que
+    embrulhe um .xsd continua nao sendo texto para citar."""
+    payload = (
+        b"<DOCUMENT>\n<TYPE>EX-101.SCH\n<SEQUENCE>3\n"
+        b"<FILENAME>nflx.xsd\n<TEXT>\n"
+        b'<?xml version="1.0"?><xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"/>'
+    )
+    assert sniff_media_type(payload) is None

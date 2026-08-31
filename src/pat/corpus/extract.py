@@ -139,6 +139,17 @@ def sniff_media_type(payload: bytes) -> str | None:
     # qualquer XML que mencione HTML num atributo.
     if head.startswith(b"<?xml") and b"<html" in head:
         return XHTML_MEDIA_TYPE
+    # Exibicao da SEC: o arquivo vem embrulhado no envelope SGML do
+    # arquivamento - `<DOCUMENT>`, `<TYPE>`, `<FILENAME>`, `<TEXT>` - e so
+    # depois comeca o HTML. O documento principal de um 10-K nao tem esse
+    # envelope, e por isso ele nunca apareceu ate as exibicoes serem buscadas:
+    # as 17 cartas ao acionista da Netflix entraram no bronze e falharam a
+    # extracao com `unsupported_media_type`, todas.
+    #
+    # A checagem exige o envelope E o `<html` depois dele, pela mesma razao da
+    # anterior: um envelope SGML que embrulhe um .xsd nao e HTML.
+    if head.startswith(b"<document>") and b"<text>" in head and b"<html" in head:
+        return HTML_MEDIA_TYPE
     return None
 
 
