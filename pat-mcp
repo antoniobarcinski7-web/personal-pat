@@ -11,4 +11,21 @@
 set -euo pipefail
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$RAIZ"
-PYTHONPATH=src exec uv run --locked python -m pat.mcp_server
+# O `uv` pelo caminho ABSOLUTO, e nao pelo PATH.
+#
+# O Claude Desktop nao abre shell de login: ele nao le `.zshrc` nem `.zprofile`,
+# entao o PATH que ele passa nao tem o Homebrew. Um `exec uv` simples aqui
+# falha com "uv: not found" - e falha DENTRO do transporte MCP, onde a
+# mensagem nao chega a lugar nenhum que alguem leia. O servidor apareceria
+# como "desconectado", sem causa.
+UV="/opt/homebrew/bin/uv"
+if [ ! -x "$UV" ]; then
+  # Fallback para quem instalou noutro lugar. A mensagem vai para stderr, que
+  # o Claude Desktop registra no log do servidor.
+  UV="$(command -v uv || true)"
+  if [ -z "$UV" ]; then
+    echo "pat-mcp: nao encontrei o \`uv\`. Instale-o ou ajuste UV neste arquivo." >&2
+    exit 1
+  fi
+fi
+PYTHONPATH=src exec "$UV" run --locked python -m pat.mcp_server
