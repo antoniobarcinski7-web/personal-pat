@@ -28,4 +28,17 @@ if [ ! -x "$UV" ]; then
     exit 1
   fi
 fi
+# O acervo mora FORA do worktree, e isto nao e arrumacao.
+#
+# `DEFAULT_HOME` do config e `Path("data")` - relativo ao diretorio de
+# trabalho -, entao o acervo vivia em `<worktree>/data`. Um `git worktree
+# remove` levava junto o bronze inteiro: os documentos, as unidades indexadas
+# e o warehouse. Nada disso esta no git, porque `data/` e ignorado e deve ser;
+# reconstruir custa horas de rede contra a CVM e a SEC, e o que a CVM devolve
+# hoje pode nao ser byte a byte o que ela devolveu quando foi ingerido.
+#
+# Apontar explicitamente e melhor do que confiar no diretorio de trabalho: o
+# Claude Desktop nao garante de onde chama o processo.
+export PAT_HOME="${PAT_HOME:-/Users/antoniobarcinski/Developer/pat-home}"
+
 PYTHONPATH=src exec "$UV" run --locked python -m pat.mcp_server
